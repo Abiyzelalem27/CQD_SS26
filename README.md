@@ -1,4 +1,4 @@
-# Computational Quantum Dynamics SS2026
+
 
 # Computational Quantum Dynamics SS2026
 
