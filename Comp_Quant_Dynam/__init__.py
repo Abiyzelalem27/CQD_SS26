@@ -1,10 +1,7 @@
 
-__all__ = [
-    "utility",
-    "hamiltonians",
-    "plotting",
-]
 
-import Comp_Quant_Dynam.utility
-import Comp_Quant_Dynam.hamiltonians
-import Comp_Quant_Dynam.plotting
+import math
+import numpy as np 
+from .hamiltonians import (sigmax, sigmay, sigmaz)
+
+__all__ = ["sigmax", "sigmay", "sigmaz"]  

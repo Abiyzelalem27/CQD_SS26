@@ -14,3 +14,4 @@ class Test_example_function:
         x = np.array([-1, 1])
         result = util.example_func(x)
         assert np.allclose(result[0], result[1])
+
