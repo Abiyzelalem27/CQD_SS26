@@ -1,4 +1,4 @@
-import numpy as np
+
 
 import numpy as np 
 import pytest
@@ -29,5 +29,3 @@ def test_sigmaz():
     """check that Z is unitary and self-inverse"""
     assert np.allclose(Z.conj().T @ Z, I)
     assert np.allclose(Z @ Z, I)  
-
-
