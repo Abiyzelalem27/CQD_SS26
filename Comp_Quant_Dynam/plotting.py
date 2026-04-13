@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+#################### Exercise sheet 1 ####################
+
 def plot_func(func, k):
     """
     Plots the function 'func' for a given value of 'k'.
