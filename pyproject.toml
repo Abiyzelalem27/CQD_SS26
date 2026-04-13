@@ -14,14 +14,16 @@ dependencies = [
     "matplotlib",
     "IPython",
     "ipywidgets",
-    "jupyter",
+    "notebook<7",
+    "jupyter_contrib_nbextensions",
     "qutip",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest",
-    "pytest-cov"
+    "pytest-cov",
+    "nbconvert",   
 ]
 
 [tool.setuptools]
