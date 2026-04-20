@@ -30,8 +30,6 @@ class Test_HO_eigenenergies:
 
         evals_num, evecs_num = LA.eigh(H_mat)
         evals_exact = ham.HO_eigenenergies_exact(np.arange(evals_num.size))
-        print(evals_num[:10])
-        print(evals_exact[:10])
         assert np.allclose(evals_num[:10], evals_exact[:10], atol=1e-3)
 
 
