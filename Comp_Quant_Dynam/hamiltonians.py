@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.special import hermite as herm
 from scipy.special import factorial
 
-sigmax = np.array([[0,1],[1,0]]) 
+sigmax = np.array([[0,1],[1,0]]) s
 sigmay = np.array([[0,-1j],[1j,0]])
 I = np.array([[1,0],[0,1]]) 
 
