@@ -30,7 +30,7 @@ def test_double_well_symmetry():
     lam = 0.1
     V = double_well(x_sym, lam)
     sym_error = np.max(np.abs(V - V[::-1]))
-    assert sym_error < 1e-12, "Potential is not symmetric"
+    assert sym_error < 1e-12, "Potential is not symmetric." 
 
 def test_double_well_center():
     V0 = double_well(np.array([0.0]), 0.1)[0]
