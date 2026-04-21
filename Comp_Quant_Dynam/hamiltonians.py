@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import numpy as np   # standard numerics library
 # standard numerics 
 import math 
@@ -5,6 +6,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import hermite as herm
 from scipy.special import factorial
+=======
+
+
+# standard numerics 
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.special import hermite, factorial
+>>>>>>> 32c83e9ff15b970e77206e6886ad427876d2a2f4
 from numpy.linalg import eigh 
 
 sigmax = np.array([[0,1],[1,0]])
@@ -29,11 +38,19 @@ def eigenfunction(n, x):
         Position values at which to evaluate the eigenfunction.
 
     Returns
+<<<<<<< HEAD
     ------- 
     array_like
         Values of the normalized eigenfunction ψ_n(x).
     """
     Hn = herm(n)
+=======
+    -------
+    array_like
+        Values of the normalized eigenfunction ψ_n(x).
+    """
+    Hn = hermite(n)
+>>>>>>> 32c83e9ff15b970e77206e6886ad427876d2a2f4
     norm = 1.0 / np.sqrt((2**n) * factorial(n) * np.sqrt(np.pi))
     return norm * Hn(x) * np.exp(-x**2 / 2) 
 
@@ -60,6 +77,7 @@ def double_well(x, lam):
     """ 
     return -0.5 * x**2 + lam * x**4
 
+<<<<<<< HEAD
 
 
 def HO_eigenstates_exact(n,x):
@@ -105,3 +123,5 @@ def HO_potential(x):
     
     return 0.5 * np.diag(x ** 2) 
 
+=======
+>>>>>>> 32c83e9ff15b970e77206e6886ad427876d2a2f4

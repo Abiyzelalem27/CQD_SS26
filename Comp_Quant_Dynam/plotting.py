@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -44,3 +45,5 @@ def plot_eigenstate(n, x, evals, evecs):
     ax.set_ylabel("$|\\phi_n(x)|^2$")
     
     return fig
+=======
+>>>>>>> 32c83e9ff15b970e77206e6886ad427876d2a2f4

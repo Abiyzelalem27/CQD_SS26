@@ -33,4 +33,9 @@ packages = ["Comp_Quant_Dynam"]
 [tool.coverage.run]
 omit = [
     "*/tests/*",
+<<<<<<< HEAD
     "*/Comp_Quant_Dynam/__init__.py", 
+=======
+    "*/Comp_Quant_Dynam/__init__.py", 
+    ]
+>>>>>>> 32c83e9ff15b970e77206e6886ad427876d2a2f4
