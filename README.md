@@ -1,8 +1,11 @@
 # Computational Quantum Dynamics SS2026
 
-[![CI](https://github.com/NiklasEuler/CQD_SS26/actions/workflows/python_CI.yml/badge.svg)](https://github.com/NiklasEuler/CQD_SS26/actions/workflows/python_CI.yml)
-[![codecov](https://codecov.io/github/NiklasEuler/CQD_SS26/graph/badge.svg?token=D1DBACZIR8)](https://codecov.io/github/NiklasEuler/CQD_SS26)
+## Computational Quantum Dynamics SS2026
+This repository contains the codebase for the course "Computational Quantum Dynamics" (Summer Semester 2026).
 
-This repository contains the codebase for the exercise sheets covered in the lecture "Computational Quantum Dynamics" from the summer semester 2026. It will be updated on a weekly basis to contain sample solutions to all posted exercises. New sheets are uploaded each Monday.
-Optional sheet submissions are due the following Monday, 8pm.
-The tutorials will take place in SR 5 Physik, Helmholtzweg 4, on Tuesdays, 4-6pm.
+## Weekly Programming Exercises 
+
+Exercise 1: Single Particle in a 1D Potential
+Analytical vs numerical eigenfunctions
+Normalization of wavefunctions
+Convergence of eigenvalues and eigenfunctions 

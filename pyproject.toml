@@ -1,3 +1,5 @@
+
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
@@ -5,7 +7,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "Comp_Quant_Dynam"
 version = "0.0.1"
-description = "Code repository with sample solutions for the Computational Quantum Dynamics course by Prof. Gärttner (SS26, Jena)"
+description = "Code repository with sample solutions for the Computational Quantum Dynamics course"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -14,16 +16,14 @@ dependencies = [
     "matplotlib",
     "IPython",
     "ipywidgets",
-    "notebook<7",
-    "jupyter_contrib_nbextensions",
+    "jupyter",
     "qutip",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest",
-    "pytest-cov",
-    "nbconvert",   
+    "pytest-cov"
 ]
 
 [tool.setuptools]
@@ -33,5 +33,4 @@ packages = ["Comp_Quant_Dynam"]
 [tool.coverage.run]
 omit = [
     "*/tests/*",
-    "*/Comp_Quant_Dynam/__init__.py",
-    ]
+    "*/Comp_Quant_Dynam/__init__.py", 
