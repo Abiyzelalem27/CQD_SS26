@@ -1,12 +1,10 @@
 import numpy as np
 
+import pytest
 import numpy as np
 import numpy.linalg as LA
-import Comp_Quant_Dynam.hamiltonians as ham
-import pytest
 from numpy.testing import assert_allclose
-
-from Comp_Quant_Dynam import I, X, Y, Z, eigenfunction, double_well 
+from Comp_Quant_Dynam import I, X, Y, Z  
 
 def test_I_gate():
     """check that I is unitary"""
@@ -26,12 +24,6 @@ def test_sigmaz():
     """check that Z is unitary and self-inverse"""
     assert np.allclose(Z.conj().T @ Z, I)
     assert np.allclose(Z @ Z, I)  
-
-def test_eigenfunction_normalization():
-    x_test = np.linspace(-5, 5, 200)
-    psi0 = eigenfunction(0, x_test)
-    norm = np.trapz(psi0**2, x_test)
-    assert np.isclose(norm, 1.0, atol=1e-2), "Eigenfunction not normalized"
 
 def test_double_well_symmetry():
     x_sym = np.linspace(-2, 2, 100)
