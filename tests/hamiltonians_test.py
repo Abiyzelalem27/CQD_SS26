@@ -1,8 +1,8 @@
-
 import numpy as np
 import numpy.linalg as LA
 from scipy.sparse.linalg import eigsh
 from math import comb
+import pytest
 
 import Comp_Quant_Dynam.hamiltonians as ham
 import Comp_Quant_Dynam.utility as util
@@ -11,7 +11,8 @@ import Comp_Quant_Dynam.operators as ops
 from Comp_Quant_Dynam.utility import create_xvals
 
 
-#################### Solution sheet 1 ####################
+###################### Solution sheet 1 ######################
+
 
 class Test_HO_eigenstates_exact:
 
@@ -46,7 +47,9 @@ class Test_HO_eigenenergies:
         evals_exact = ham.HO_eigenenergies_exact(np.arange(evals_num.size))
         assert np.allclose(evals_num[:10], evals_exact[:10], atol=self.acc)
 
-#################### Solution sheet 2 ####################
+
+###################### Solution sheet 2 ######################
+
 
 class Test_HO_sparse_eigenenergies:
     
@@ -77,7 +80,7 @@ class Test_HO_sparse_eigenenergies:
         assert np.allclose(np.abs(overlaps), 1) # check that the eigenvectors are approximately the same, up to a global phase
 
 
-#################### Solution sheet 3 ####################
+###################### Solution sheet 3 ######################
 
 
 class Test_potentials:
@@ -101,7 +104,7 @@ class Test_potentials:
         assert np.allclose(expected, result)
 
 
-##################### Exercise sheet 4 ####################
+###################### Exercise sheet 4 ######################
 
 
 class Test_build_H_coupled_HO_man:
@@ -281,7 +284,7 @@ class Test_coupled_HO_potential:
         assert np.allclose(self.H_pot.diagonal(), expected_no_coupling.diagonal()) # the coupling term should not contribute to the diagonal elements of the potential
 
 
-##################### Solution sheet 5 ####################
+###################### Solution sheet 5 ######################
 
 
 class Test_build_H_TFIM:
@@ -368,7 +371,8 @@ class Test_build_H_TFIM_symm:
         assert np.allclose(probs_GS, probs_expected, atol=1e-6) # check that the ground state is approximately equal to the expected ground state, which is an equal superposition of all computational basis states
 
 
-##################### Solution sheet 7 ####################
+###################### Solution sheet 7 ######################
+
 
 class Test_TFIM_E_MF:
     
@@ -388,3 +392,128 @@ class Test_TFIM_E_MF:
         phi = np.pi / 2
         result = ham.E_MF(self.z, phi, omega)
         assert np.allclose(expected, result)
+
+
+###################### Solution sheet 8 ######################
+
+
+class Test_build_H_TFIM_individual:
+
+    N = 10
+    ome = 0.5
+
+    def test_build_H_TFIM_individual_hermitian(self):
+        tol = 1e-10
+        H_indiv = ham.build_H_TFIM_individual(self.N, self.ome)
+        diff = H_indiv - H_indiv.conj().T
+        
+        assert diff.nnz == 0 or np.max(np.abs(diff.data)) < tol  # check that the difference between H and its conjugate transpose is approximately zero, which means that H is Hermitian
+
+    def test_build_H_TFIM_individual_no_field(self):
+        ome = 0
+        H_indiv = ham.build_H_TFIM_individual(self.N, ome)
+        H_diag = H_indiv.diagonal()
+        H_reconstr = ops.diagonal_op_sparse(H_diag)
+        diff = H_indiv - H_reconstr
+        assert np.allclose(diff.data, 0) # check that the off-diagonal elements of H are zero when there is no transverse field, which means that the Hamiltonian is diagonal in the computational basis
+
+    def test_build_H_TFIM_individual_gs_energy(self):
+
+        E_exact = ham.E_TFIM_individual_exact(self.N, self.ome)
+        H_indiv = ham.build_H_TFIM_individual(self.N, self.ome)
+        evals, evecs = eigsh(H_indiv, k=1, which='SA') # compute the lowest eigenvalue and eigenvector of H using the sparse eigensolver
+        E_num = evals[0]
+        assert np.isclose(E_num, E_exact, atol=1e-8) # check that the ground state energy computed from the Hamiltonian matches the exact ground state energy computed from the analytical formula
+        
+
+class Test_E_TFIM_individual_exact:
+
+    N = 11
+    ome = 0.5
+
+    def test_E_TFIM_individual_exact_odd(self):
+        with pytest.raises(AssertionError, match="The exact solution for the ground state energy of the TFIM is only implemented for even N"):
+            ham.E_TFIM_individual_exact(self.N, self.ome)
+        
+
+class Test_build_H_TFIM_A2A:
+
+    N = 8
+    ome = 0.5
+
+    def test_build_H_TFIM_A2A_hermitian(self):
+        tol = 1e-10
+        H_A2A = ham.build_H_TFIM_A2A(self.N, self.ome)
+        diff = H_A2A - H_A2A.conj().T
+        
+        assert diff.nnz == 0 or np.max(np.abs(diff.data)) < tol  # check that the difference between H and its conjugate transpose is approximately zero, which means that H is Hermitian
+
+    def test_build_H_TFIM_A2A_no_field(self):
+        ome = 0
+        H_A2A = ham.build_H_TFIM_A2A(self.N, ome)
+        H_diag = H_A2A.diagonal()
+        H_reconstr = ops.diagonal_op_sparse(H_diag)
+        diff = H_reconstr - H_A2A
+        assert np.allclose(diff.data, 0) # check that the off-diagonal elements of H are zero when there is no transverse field, which means that the Hamiltonian is diagonal in the computational basis
+
+    def test_build_H_TFIM_A2A_entropy(self):
+
+        t = 3
+        dim = 2 ** self.N
+
+        H_A2A = ham.build_H_TFIM_A2A(self.N, self.ome)
+        evals, evecs = LA.eigh(H_A2A.toarray()) # compute the eigenvalues and eigenvectors of H using the dense eigensolver
+        ini = np.full(dim, 1/np.sqrt(dim)) # initial state is the equal superposition of all computational basis states
+        ini_proj = unitaries.init_coeffs_eigenbasis(ini, evecs) # project the initial state onto the eigenbasis of H
+
+        state_t = unitaries.t_evol_eigenbasis(ini_proj, t, evals, evecs) # evolve the state in time using the eigenvalues and eigenvectors of H
+        #rho_t = np.outer(state_t, state_t.conj()) # compute the density matrix of the state at time t
+        rho_red = util.partial_trace(state_t, self.N // 2)
+        S_A = util.entanglement_entropy(rho_red)
+
+        H_coll = ham.build_H_TFIM(self.N, self.ome)
+        evals_coll, evecs_coll = LA.eigh(H_coll.toarray()) # compute the eigenvalues and eigenvectors of the collective Hamiltonian using the dense eigensolver
+        ini_coll = util.CSS(self.N, np.pi / 2, 0)
+        ini_proj_coll = unitaries.init_coeffs_eigenbasis(ini_coll, evecs_coll) # project the initial state onto the eigenbasis of the collective Hamiltonian
+        state_t_coll = unitaries.t_evol_eigenbasis(ini_proj_coll, t, evals_coll, evecs_coll) # evolve the state in time using the eigenvalues and eigenvectors of the collective Hamiltonian
+        rho_red_coll = util.trace_half_collective(state_t_coll)
+        S_A_coll = util.entanglement_entropy(rho_red_coll)
+        assert np.isclose(S_A, S_A_coll, atol=1e-6) # check that the entanglement entropy computed from the A2A Hamiltonian matches the entanglement entropy computed from the collective Hamiltonian, which should be the same since the A2A Hamiltonian is designed to reproduce the dynamics of the collective Hamiltonian in the symmetric subspace
+
+
+###################### Solution sheet 9 ######################
+
+
+class Test_build_H_AKLT:
+
+    N = 10
+    
+    def test_build_H_AKLT_periodic(self):
+        H_AKLT = ham.build_H_AKLT(self.N, open_bc=False).real
+        evals = eigsh(H_AKLT, k=2, which='SA', return_eigenvectors=False)
+        evals.sort()
+        gap = evals[1] - evals[0]
+        assert gap > 0 # check that the energy gap is positive, which means that the ground state is unique and the system is gapped
+
+    def test_build_H_AKLT_open(self):
+        H_AKLT = ham.build_H_AKLT(self.N, open_bc=True).real
+        evals = eigsh(H_AKLT, k=2, which='SA', return_eigenvectors=False)
+        evals.sort()
+        gap = evals[1] - evals[0]
+        assert gap < 1e-10 # check that the energy gap is approximately zero, which means that the ground state is degenerate and the system is gapless
+
+    def test_build_H_AKLT_theta_large(self):
+        theta = 1
+        H_AKLT = ham.build_H_AKLT(self.N, open_bc=False, theta=theta).real
+        evals = eigsh(H_AKLT, k=2, which='SA', return_eigenvectors=False)
+        evals.sort()
+        gap = evals[1] - evals[0]
+        assert gap < 1e-10 # check that the energy gap is approximately zero, which means that the ground state is degenerate and the system is gapless
+
+    def test_build_H_AKLT_theta_small(self):
+        theta = 0.1
+        H_AKLT = ham.build_H_AKLT(self.N, open_bc=False, theta=theta).real
+        evals = eigsh(H_AKLT, k=2, which='SA', return_eigenvectors=False)
+        evals.sort()
+        gap = evals[1] - evals[0]
+        assert gap > 0 # check that the energy gap is positive, which means that the ground state is unique and the system is gapped

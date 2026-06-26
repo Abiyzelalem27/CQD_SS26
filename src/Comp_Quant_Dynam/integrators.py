@@ -11,8 +11,7 @@ from Comp_Quant_Dynam.utility import expectation_value
 from Comp_Quant_Dynam.unitaries import calc_expv_ED
 
 
-##################### Exercise sheet 6 ################### 
-
+###################### Exercise sheet 6 ######################
 
 def integrate_ODE(stepper_func, obsv_vec, H_mat, ini, tvec_out, int_steps_per_dtout, stepper_args):
     """
@@ -155,8 +154,7 @@ def generate_krylov_subspace(N, n, y, H_mat):
     return Qs, h
 
 
-##################### Solution sheet 6 ###################
-
+###################### Solution sheet 6 ######################
 def RK2_step(y, H_mat, dt, stepper_args):
     """
     Returns the next step of the second-order Runge-Kutta method for integrating the Schrödinger equation
@@ -216,10 +214,7 @@ def scipyODE_step(y, H_mat, dt,stepper_args):
     return r.y
 
 
-##################### Solution sheet 7 ###################
-
-
-# solve the mean field equations using xyz equations.
+###################### Solution sheet 7 ######################
 
 def TFIM_MF_diff_eq(t, y, omega):
     """

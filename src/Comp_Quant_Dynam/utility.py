@@ -1,7 +1,11 @@
 import numpy as np   # standard numerics library
+from numpy import linalg as LA
 from collections.abc import Iterable, Sequence
 from numpy import pi, sin, cos, tan, arcsin, arccos, arctan, sqrt, exp
 from scipy.special import factorial, binom
+import jax
+import jax.numpy as jnp
+
 
 
 def example_func(x):
@@ -13,8 +17,7 @@ def example_func(x):
     return 1 / pi ** (1 / 4) * exp(-x ** 2 / 2)
 
 
-#################### Solution sheet 2 ####################
-
+###################### Solution sheet 2 ######################
 
 def create_xvals(L, npoints, endpoint=True):
     """
@@ -27,8 +30,7 @@ def create_xvals(L, npoints, endpoint=True):
     return xvals, dx
 
 
-#################### Solution sheet 3 ####################
-
+###################### Solution sheet 3 ######################
 
 def FT(psi, x, k):
     """
@@ -63,8 +65,7 @@ def create_tvecs(tsteps, dt):
     return np.linspace(0, tsteps * dt, tsteps + 1) # will have length tsteps + 1
 
 
-##################### Exercise sheet 4 ###################
-
+###################### Exercise sheet 4 ######################
 def idx2state(N1, N2, i):
     """
     Converts a single index `i` to a 'state' in the product Hilbert space |n1, n2> of dimension N1 x N2.
@@ -88,8 +89,7 @@ def state2idx(N1, N2, state):
     return i
     
 
-##################### Solution sheet 4 ###################
-
+###################### Solution sheet 4 ######################
 def create_coherent_state(N, alpha):
     """
     Creates a coherent state |alpha> in the Fock basis of dimension `N` with complex amplitude `alpha`.
@@ -107,13 +107,13 @@ def expectation_value(state, operator):
     The `operator` argument can be either a single operator or an iterable of operators.
     If it is an iterable, the function returns a vector of expectation values for each operator.
     """
-    n_obsv, operator = check_if_sized(operator)
+    n_obsv, operator = _check_if_sized(operator)
     if n_obsv > 1:
         return np.array([expectation_value(state, op) for op in operator])
 
     return np.vdot(state, operator @ state)
 
-def check_if_sized(obsv_vec):
+def _check_if_sized(obsv_vec):
     """
     Helper function to check if the input `obsv_vec` is an iterable of operators or a single operator, and to determine the number of observables.
     If `obsv_vec` is a single operator or a Sequence containing a single operator, it returns (1, obsv_vec).
@@ -134,8 +134,7 @@ def check_if_sized(obsv_vec):
     return n_obsv, obsv_vec
 
 
-##################### Exercise sheet 7 ###################
-
+###################### Exercise sheet 7 ######################
 
 def CSS(N, theta, phi):
     """
@@ -299,3 +298,145 @@ def Husimi_top(N, psi, nx, ny):
                 mask[idx_x, idx_y] = False
     H = np.ma.array(H, mask=mask)
     return X, Y, H
+
+
+###################### Solution sheet 8 ######################
+
+
+def partial_trace(psi, M):
+    """
+    Computes the reduced density matrix obtained by tracing out `M` spins from a pure state `psi` of `N` spins.
+    The basis ordering is assumed to be |0...00>, |0...01>, ..., |1...11>, where last spin corresponds to the least significant bit.
+    The last (rightmost) `M` spins are traced out, and the resulting reduced density matrix has dimension 2^(N-M) x 2^(N-M).
+    """
+
+    N = int(np.log2(len(psi)))
+    assert 1 <= M < N, "M must be between 1 and N-1"
+    dim_red = 2 ** (N - M)
+    dim_trace = 2 ** M
+    rho_red = np.zeros((dim_red, dim_red), dtype=complex)
+    for i in range(dim_red):
+        for j in range(i, dim_red):
+            rho_red[i,j] = psi[range(i * dim_trace, (i + 1) * dim_trace)].T @ psi[range(j * dim_trace, (j + 1) * dim_trace)].conj()
+    rho_red = rho_red + rho_red.T.conj() - np.diag(np.diag(rho_red)) # make it Hermitian
+    return rho_red
+
+def get_evals(rho):
+    """
+    Computes the eigenvalues of a density matrix `rho` and returns them in descending order.
+    Used to compute the entanglement spectrum of a reduced density matrix, which is the set of eigenvalues of the reduced density matrix obtained by tracing out part of a pure state.
+    """
+
+    evals = LA.eigvalsh(rho)
+    return np.flip(evals) # eigh returns eigenvalues sorted in ascending order, so need to reverse list
+
+def entanglement_entropy(rho):
+    """
+    Computes the von Neumann entanglement entropy of a density matrix `rho`.
+    The von Neumann entropy is defined as:
+    S = -Tr(rho log2(rho)) = -sum_i p_i log2(p_i)
+    where p_i are the eigenvalues of rho. The function first computes the eigenvalues of rho, then filters out any eigenvalues that are zero (or very close to zero) to avoid issues with the logarithm, and finally computes the entropy using the formula above.
+    """
+
+    evals = get_evals(rho)
+    
+    ps = entanglement_entropy_from_evals(evals) 
+    return ps
+
+def entanglement_entropy_from_evals(evals):
+    """
+    Computes the von Neumann entanglement entropy from a list of eigenvalues `evals` of a density matrix.
+    This function is useful if you already have the eigenvalues of the reduced density matrix and want to compute the entanglement entropy without having to reconstruct the density matrix itself.
+    The function filters out any eigenvalues that are zero (or very close to zero) to avoid issues with the logarithm, and then computes the entropy using the formula S = -sum_i p_i log2(p_i).
+    """
+    evals = np.asarray(evals)
+    ps = evals[evals > 1e-12]
+    return -np.sum(ps * np.log2(ps))
+
+def trace_half_collective(psi):
+    """
+    Computes the reduced density matrix obtained by tracing out half of the spins from a pure collective spin state `psi` of `N` spins, where `N` is the total number of spins in the system.
+    The basis is assumed to be the Dicke basis, where the state |n> corresponds to n excitations (spin up) and N-n non-excitations (spin down).
+    """
+    
+    N = len(psi) - 1
+    rho = psi.conj().reshape(1 , N + 1) * psi.reshape(N + 1, 1)
+    rho_red = np.zeros((int(N / 2) + 1, int(N / 2) + 1), dtype=complex)
+    pvec = np.arange(N / 2 + 1, dtype=int)
+    for i in range(len(rho_red)):
+        for j in range(len(rho_red)):
+            coeff = np.sqrt(binom(N / 2, i) * binom(N / 2, j))
+            rho_red[i,j] = coeff * np.sum(rho[i + pvec, j + pvec] * binom(N / 2, pvec) / np.sqrt(binom(N, i + pvec) * binom(N, j + pvec)))
+    return rho_red
+
+
+###################### Solution sheet 9 ######################
+
+def n_party_idx2state(idx, local_dim, N):
+    """
+    Converts a single index `idx` to a 'state' in the product Hilbert space of dimension `local_dim^N`.
+    The basis ordering is assumed to be |-k,-k,...,-k>, |-k,-k,...,-k+1>, ..., |k,k,...,k>, where k = (local_dim - 1) / 2, and the last spin corresponds to the least significant bit. 
+    The function returns a state vector of length `N`, where each entry corresponds to the local state of each spin in the product state.
+    """
+    state = np.zeros((N,), dtype='int32')
+    rest = idx
+    for i in range(N - 1):
+        base = local_dim ** (N - i - 1)
+        div = rest // base
+        state[i] = div
+        rest = rest % base
+    state[N - 1] = rest
+
+    
+    return np.int64((state - (local_dim - 1) / 2)) # invert #-1 * 
+
+
+###################### Solution sheet 10 ######################
+
+
+def MCMC_Sampler_Metropolis_Hastings(model, params, init_state, num_samples, PRNGkey):
+    """ 
+    Performs Markov Chain Monte Carlo Sampling based on the Metropolis-Hastings algorithm,
+    based on a flax-`model`, starting from initial spin state `init_state`, 
+    by flipping random spins over a full sweep over N_spins.
+    """
+    
+    def MCMC_step(carry, _):
+        s, key = carry
+
+        num_spins = s.shape[0]
+
+        def full_sweep_body(carry, _):
+            # perform a full sweep over N_spins to generate minimally autocorrelated samples 
+            s, key = carry
+
+            key, key_idx, key_accept = jax.random.split(key, 3)
+
+            s_flat = s.ravel()
+            
+            # Propose a new state 
+            idx = jax.random.randint(key_idx, shape=(), minval=0, maxval=num_spins)
+            flipped_value = 1 - s_flat[idx]
+
+            s_prime_flat = s_flat.at[idx].set(flipped_value)
+            s_prime = s_prime_flat.reshape(s.shape)
+        
+            # Probability of accepting the proposed s_prime
+            p_accept = jnp.minimum(1.0, jnp.exp((2 * jnp.real(model.apply(params, s_prime))
+                    -
+                    2 * jnp.real(model.apply(params, s))
+                )) )
+
+            u = jax.random.uniform(key_accept)
+            accept = u < p_accept
+            s_next = jnp.where(accept, s_prime, s)
+
+            return (s_next, key), None
+        
+        (next_s, next_key), _ = jax.lax.scan(full_sweep_body, (s, key), None, length=num_samples)
+
+        return (next_s, next_key), next_s
+
+    _, samples = jax.lax.scan(MCMC_step, (init_state, PRNGkey), None, length=num_samples)
+
+    return samples 

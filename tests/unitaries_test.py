@@ -1,10 +1,13 @@
 import numpy as np
+
 import Comp_Quant_Dynam.unitaries as unit
 import Comp_Quant_Dynam.utility as util
+import Comp_Quant_Dynam.hamiltonians as hams
+import Comp_Quant_Dynam.operators as ops
+import pytest
 
 
-#################### Solution sheet 2 ####################
-
+#################### Solution sheet 2 #####################
 
 class Test_init_coeffs_eigenbasis:
 
@@ -47,8 +50,7 @@ class Test_t_evol_eigenbasis:
         assert np.isclose(np.abs(overlap), 1) # check that the evolved state is approximately the expected state in the computational basis, up to a global phase
 
     
-#################### Solution sheet 3 ####################
-
+#################### Solution sheet 3 #####################
 
 
 class Test_t_evol_split_step_fourier:
@@ -82,3 +84,54 @@ class Test_t_evol_split_step_fourier:
         assert np.isclose(np.abs(overlap), 1) # check that the state approximately returns to itself after one period of the harmonic oscillator, up to a global phase
 
     
+#################### Exercise sheet 6 #####################
+
+class Test_calc_expv_ED:
+    
+    def test_calc_expv_ED(self):
+        N = 8
+        state = np.eye(1, 2**N, 0).flatten() # initial state |000...0>
+
+        sig_x = ops.sigma_x_sparse() # single-site sigma_x operator
+        sig_z = ops.sigma_z_sparse() # single-site sigma_z operator
+
+        local_dims = [2] * N
+        H = 0.5 * ops.n_party_op_sparse(local_dims, 3, sig_x)
+        z3 = ops.n_party_op_sparse(local_dims, 3, sig_z)
+        z4 = ops.n_party_op_sparse(local_dims, 4, sig_z)
+        obsv_vec = np.array([z3, z4]) # we want to compute the expectation values of sigma_z on sites 3 and 4
+
+        t_end = 2 * np.pi
+        t_steps = 1000
+        tvec = util.create_tvecs(tsteps=t_steps, dt=t_end / t_steps)
+        expv = unit.calc_expv_ED(obsv_vec, H, state, tvec)
+        assert expv.shape == (2, t_steps + 1) # check that the output has the correct shape
+        assert np.all(np.abs(expv) <= 1) # check that the expectation values are between -1 and 1, as expected for sigma_z
+        assert np.allclose(expv[1, :], -1) # check that the expectation value of sigma_z on site 4 is always -1, since the Hamiltonian only acts on site 3 and does not affect site 4
+        expected = -1 * np.cos(tvec) # the expectation value of sigma_z on site 3 should oscillate as -cos(t) since the Hamiltonian is a sigma_x term on site 3
+        diff = expv[0, :] - expected
+        assert np.allclose(expv[0, :], expected, atol = 1e-2), (
+            "Expectation value of sigma_z on site 3 does not match the expected oscillation; "
+            f"max_abs_diff={np.max(np.abs(diff))}, "
+            f"midpoint={expv[0, t_steps // 2]}, "
+            f"expected_midpoint={expected[t_steps // 2]}"
+        ) # check that the expectation value of sigma_z on site 3 approximately matches the expected oscillation, allowing for some numerical error
+
+    def test_calc_expv_ED_warnings(self):
+        N = 8
+        state = np.eye(1, 2**N, 0).flatten() # initial state |000...0>
+
+        sig_x = ops.sigma_x_sparse() # single-site sigma_x operator
+        sig_z = ops.sigma_z_sparse() # single-site sigma_z operator
+        
+        non_hermitian_op = sig_x + 1j * sig_z # non-Hermitian operator
+        nh3 = ops.n_party_op_sparse([2] * N, 3, non_hermitian_op) # non-Hermitian operator acting on site 3
+
+        local_dims = [2] * N
+
+        H = 0.5 * ops.n_party_op_sparse(local_dims, 3, sig_x)
+        
+        t_end = 2 * np.pi
+        t_steps = 100
+        tvec = util.create_tvecs(tsteps=t_steps, dt=t_end / t_steps)
+        pytest.warns(UserWarning, unit.calc_expv_ED, nh3, H, state, tvec)

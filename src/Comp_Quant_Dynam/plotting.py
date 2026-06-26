@@ -8,8 +8,7 @@ import Comp_Quant_Dynam.utility as utility
 import Comp_Quant_Dynam.operators as operators
 
 
-#################### Exercise sheet 1 ####################
-
+#################### Exercise sheet 1 #####################
 
 def plot_func(func, k):
     """
@@ -27,8 +26,7 @@ def plot_func(func, k):
     return plt.gcf()
 
 
-#################### Solution sheet 1 ####################
-
+###################### Solution sheet 1 ######################
 
 def plot_eigenstate(n, x, evals, evecs):
     """
@@ -52,8 +50,7 @@ def plot_eigenstate(n, x, evals, evecs):
     return fig
 
 
-#################### Solution sheet 2 ####################
-
+###################### Solution sheet 2 ######################
 
 def animate(t, *args):
     """
@@ -70,8 +67,7 @@ def animate(t, *args):
     return line,
 
 
-#################### Solution sheet 3 ####################
-
+###################### Solution sheet 3 ######################
 
 def multi_animate(t, *args):
     """
@@ -89,8 +85,7 @@ def multi_animate(t, *args):
     return lines
 
 
-##################### Exercise sheet 4 ####################
-
+###################### Exercise sheet 4 ######################
 
 def plot_prob_amplitude_2D(t, wfcts, tvec, L):
     """
@@ -109,8 +104,7 @@ def plot_prob_amplitude_2D(t, wfcts, tvec, L):
     plt.show()
 
 
-##################### Exercise sheet 6 ####################
-
+###################### Exercise sheet 6 ######################
 
 def plot_compare_ED(N, observables_Integrator, observables_ED, tvec_output):
     """
@@ -168,8 +162,7 @@ def plot_deviations(idx_stepsize, deviations, tvec_output, step_sizes):
     plt.show()
 
 
-##################### Exercise sheet 7 ####################
-
+###################### Exercise sheet 7 ######################
 def rotation_bloch_sphere(phi, ini, operator, bloch):
     """
     Rotates a state `ini` on the Bloch sphere by an angle `phi` around a given `operator`, and updates the Bloch sphere visualization `bloch` accordingly.
@@ -226,8 +219,7 @@ def plot_H_wrapper_interact(it,HfrontAll, HbackAll, HtopAll, grid, HscaleMax):
     plot_H_all(HfrontAll[:,:,it], HbackAll[:,:,it], HtopAll[:,:,it], grid, HscaleMax)
 
 
-##################### Solution sheet 7 ####################
-
+###################### Solution sheet 7 ######################
 
 def plot_hmf_line(ome):
     """
