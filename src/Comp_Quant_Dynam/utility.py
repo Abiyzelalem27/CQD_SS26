@@ -644,7 +644,7 @@ def run_vmc_training(
     for it in range(num_iterations):
         key, sample_key = jax.random.split(key)
 
-        samples = cqd.utility.MCMC_Sampler_Metropolis_Hastings(
+        samples = MCMC_Sampler_Metropolis_Hastings(
             model=model,
             params=params,
             init_state=init_state,
@@ -655,7 +655,7 @@ def run_vmc_training(
         # Continue Markov chain from the last sample
         init_state = samples[-1]
 
-        E_var, grads = cqd.utility.energy_and_gradient(
+        E_var, grads = energy_and_gradient(
             params=params,
             samples=samples,
             model=model,
