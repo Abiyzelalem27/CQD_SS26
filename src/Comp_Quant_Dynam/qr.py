@@ -65,3 +65,7 @@ def qr_algorithm(A, n, tol):
         if np.allclose(X, np.triu(X), atol=tol):  # Check if matrix becomes upper triangular
             break
     return Q
+
+
+
+

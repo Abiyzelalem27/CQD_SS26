@@ -5,7 +5,8 @@ from numpy import pi, sin, cos, tan, arcsin, arccos, arctan, sqrt, exp
 from scipy.special import factorial, binom
 import jax
 import jax.numpy as jnp
-
+from flax import linen as nn 
+import optax
 
 
 def example_func(x):
@@ -393,50 +394,280 @@ def n_party_idx2state(idx, local_dim, N):
 
 ###################### Solution sheet 10 ######################
 
+class Jastrow(nn.Module):
+    """
+    Short-range Jastrow variational wavefunction.
+
+    The logarithm of a variational wavefunction for ssa one-dimensional spin chain. It includes nearest-neighbour and
+    next-nearest-neighbour spin correlations with trainable parameters J1 and J2.
+
+    log psi(s) = sum_i J1 sigma_i sigma_{i+1} + sum_i J2 sigma_i sigma_{i+2}, where sigma_i = +/- 1.
+    """
+
+    @nn.compact
+    def __call__(self, s):
+        """
+        Evaluate the logarithm of the Jastrow wavefunction.
+
+        Args:
+            s: Spin configuration with entries 0 or 1.
+        """
+
+        sigma_z = 2 * s - 1
+        J1 = self.param("J1", nn.initializers.zeros, ())
+        J2 = self.param("J2", nn.initializers.zeros, ())
+        nn_corr = jnp.sum(
+            sigma_z * jnp.roll(sigma_z, -1, axis=-1),
+            axis=-1,
+        )
+
+        nnn_corr = jnp.sum(
+            sigma_z * jnp.roll(sigma_z, -2, axis=-1),
+            axis=-1,
+        )
+
+        return J1 * nn_corr + J2 * nnn_corr
+        
+             
 
 def MCMC_Sampler_Metropolis_Hastings(model, params, init_state, num_samples, PRNGkey):
     """ 
-    Performs Markov Chain Monte Carlo Sampling based on the Metropolis-Hastings algorithm,
-    based on a flax-`model`, starting from initial spin state `init_state`, 
-    by flipping random spins over a full sweep over N_spins.
+    Performs Markov Chain Monte Carlo sampling using the Metropolis-Hastings algorithm.
+
+    The sampler starts from an initial spin configuration and proposes new
+    configurations by flipping random spins. For each saved sample, a full
+    sweep over the spin chain is performed to reduce autocorrelation.
     """
-    
+
     def MCMC_step(carry, _):
         s, key = carry
 
         num_spins = s.shape[0]
 
         def full_sweep_body(carry, _):
-            # perform a full sweep over N_spins to generate minimally autocorrelated samples 
+             # perform a full sweep over N_spins to generate minimally autocorrelated samples
             s, key = carry
 
             key, key_idx, key_accept = jax.random.split(key, 3)
 
             s_flat = s.ravel()
-            
-            # Propose a new state 
-            idx = jax.random.randint(key_idx, shape=(), minval=0, maxval=num_spins)
-            flipped_value = 1 - s_flat[idx]
 
+            # Propose a new state by flipping one random spin
+            idx = jax.random.randint(
+                key_idx,
+                shape=(),
+                minval=0,
+                maxval=num_spins
+            )
+
+            flipped_value = 1 - s_flat[idx]
             s_prime_flat = s_flat.at[idx].set(flipped_value)
             s_prime = s_prime_flat.reshape(s.shape)
-        
-            # Probability of accepting the proposed s_prime
-            p_accept = jnp.minimum(1.0, jnp.exp((2 * jnp.real(model.apply(params, s_prime))
-                    -
-                    2 * jnp.real(model.apply(params, s))
-                )) )
 
+            # Compute Metropolis-Hastings acceptance probability
+            logpsi_prime = model.apply(params, s_prime)
+            logpsi_current = model.apply(params, s)
+
+            p_accept = jnp.minimum(
+                1.0,
+                jnp.exp(
+                    2 * jnp.real(logpsi_prime)
+                    -
+                    2 * jnp.real(logpsi_current)
+                )
+            )
+
+            # Accept or reject the proposed state
             u = jax.random.uniform(key_accept)
             accept = u < p_accept
+
             s_next = jnp.where(accept, s_prime, s)
 
             return (s_next, key), None
-        
-        (next_s, next_key), _ = jax.lax.scan(full_sweep_body, (s, key), None, length=num_samples)
+
+        # One full sweep: about one attempted update per spin
+        (next_s, next_key), _ = jax.lax.scan(
+            full_sweep_body,
+            (s, key),
+            None,
+            length=num_spins
+        )
 
         return (next_s, next_key), next_s
 
-    _, samples = jax.lax.scan(MCMC_step, (init_state, PRNGkey), None, length=num_samples)
+    _, samples = jax.lax.scan(
+        MCMC_step,
+        (init_state, PRNGkey),
+        None,
+        length=num_samples
+    )
 
-    return samples 
+    return samples
+
+def local_energy_TFIM(params, s, model, B):
+    """
+    Local energy for the 1D transverse-field Ising model:
+
+        H = - sum_i sigma_z_i sigma_z_{i+1} - B sum_i sigma_x_i
+
+    The spin configuration s is represented using 0/1 spins.
+    """
+
+    # Convert 0/1 spins to -1/+1 eigenvalues of sigma_z
+    z = 2 * s - 1
+
+    # Diagonal Ising interaction term
+    E_diag = -jnp.sum(z * jnp.roll(z, -1))
+
+    # Transverse-field term: flip each spin once
+    logpsi_s = model.apply(params, s)
+    N = s.shape[0]
+
+    def flip_spin(i):
+        return s.at[i].set(1.0 - s[i])
+
+    flipped_states = jax.vmap(flip_spin)(jnp.arange(N))
+
+    logpsi_flipped = jax.vmap(
+        lambda sf: model.apply(params, sf)
+    )(flipped_states)
+
+    # psi(s') / psi(s) = exp(logpsi(s') - logpsi(s))
+    ratios = jnp.exp(logpsi_flipped - logpsi_s)
+
+    E_offdiag = -B * jnp.sum(ratios)
+
+    return jnp.real(E_diag + E_offdiag)
+
+
+def energy_and_gradient(params, samples, model, B):
+    """
+    Compute the Monte Carlo variational energy and its VMC gradient:
+
+        grad E = 2 Re[ <O* E_loc> - <O*> <E_loc> ]
+
+    where
+
+        O_k(s) = d log psi(s) / d theta_k.
+    """
+
+    # Local energy for every sampled spin configuration
+    E_loc = jax.vmap(
+        lambda s: local_energy_TFIM(params, s, model, B)
+    )(samples)
+
+    # Monte Carlo estimate of the variational energy
+    E_mean = jnp.mean(E_loc)
+
+    # Centered local energy
+    centered_E = jax.lax.stop_gradient(E_loc - E_mean)
+
+    # Define log psi as a function of parameters and spin configuration
+    def logpsi_fn(p, s):
+        return model.apply(p, s)
+
+    # O_k(s) = d log psi(s) / d theta_k
+    O_tree = jax.vmap(
+        jax.grad(logpsi_fn),
+        in_axes=(None, 0)
+    )(params, samples)
+
+    # Apply the VMC gradient formula to every parameter leaf
+    def grad_leaf(O):
+        shape = (-1,) + (1,) * (O.ndim - 1)
+        centered = centered_E.reshape(shape)
+
+        return 2.0 * jnp.real(
+            jnp.mean(jnp.conj(O) * centered, axis=0)
+        )
+
+    grads = jax.tree_util.tree_map(grad_leaf, O_tree)
+
+    return E_mean, grads 
+
+class NQS_FFNN(nn.Module):
+    """
+    Feed-forward neural-network ansatz for a Neural Quantum State.
+
+    The model takes a spin configuration and returns one real number,
+    corresponding to log psi(s).
+    """
+
+    hidden_dims: tuple = (16,)
+    actfunc: callable = nn.tanh
+
+    @nn.compact
+    def __call__(self, s):
+        # Convert 0/1 spins to -1/+1 spins
+        x = 2 * s - 1
+
+        for hidden_dim in self.hidden_dims:
+            x = nn.Dense(
+                hidden_dim,
+                kernel_init=jax.nn.initializers.lecun_normal(),
+                bias_init=jax.nn.initializers.zeros,
+            )(x)
+            x = self.actfunc(x)
+
+        # Final layer outputs one real number: log psi(s)
+        x = nn.Dense(
+            1,
+            kernel_init=jax.nn.initializers.lecun_normal(),
+            bias_init=jax.nn.initializers.zeros,
+        )(x)
+
+        return x[..., 0]
+
+def run_vmc_training(
+    model,
+    N_spins,
+    B,
+    N_MC,
+    num_iterations,
+    lr,
+    seed,
+):
+    """
+    Run VMC ground-state search for a given variational model.
+    """
+
+    key = jax.random.PRNGKey(seed)
+
+    init_state = jnp.ones((N_spins,))
+    params = model.init(key, init_state)
+
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(params)
+
+    energies = []
+
+    for it in range(num_iterations):
+        key, sample_key = jax.random.split(key)
+
+        samples = cqd.utility.MCMC_Sampler_Metropolis_Hastings(
+            model=model,
+            params=params,
+            init_state=init_state,
+            num_samples=N_MC,
+            PRNGkey=sample_key,
+        )
+
+        # Continue Markov chain from the last sample
+        init_state = samples[-1]
+
+        E_var, grads = cqd.utility.energy_and_gradient(
+            params=params,
+            samples=samples,
+            model=model,
+            B=B,
+        )
+
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+
+        energies.append(float(E_var))
+
+        if it % 20 == 0:
+            print(f"Iteration {it:4d} | E_var = {float(E_var):.6f}")
+
+    return params, energies
