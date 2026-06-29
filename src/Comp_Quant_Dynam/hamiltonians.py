@@ -1,5 +1,8 @@
 import numpy as np   # standard numerics library
 import math
+import scipy.sparse.linalg as sLA
+import jax
+import jax.numpy as jnp
 from scipy.special import hermite as herm
 import scipy.sparse as sparse # routines for sparse matrices
 
@@ -403,3 +406,65 @@ def build_H_AKLT(N, theta=np.arctan(1 / 3), open_bc=False):
     H_mat += c0 * I * N
     
     return H_mat
+
+
+###################### Solution sheet 10 ######################
+
+def build_H_tilted_TFIM_ED(N, J, B, g):
+    """
+    Build the tilted 1D TFIM Hamiltonian:
+
+        H = -J sum_i sigma_z_i sigma_z_{i+1}
+            -B sum_i sigma_x_i
+            -g sum_i sigma_z_i
+
+    using periodic boundary conditions.
+    """
+
+    dims_local = [2] * N
+
+    sig_x = [
+        n_party_op_sparse(
+            dims_local,
+            i,
+            ops.sigma_x_sparse(),
+        )
+        for i in range(N)
+    ]
+
+    sig_z = [
+        n_party_op_sparse(
+            dims_local,
+            i,
+            ops.sigma_z_sparse(),
+        )
+        for i in range(N)
+    ]
+
+    dim_global = 2 ** N
+    H = sparse.csr_array((dim_global, dim_global), dtype=complex)
+
+    for i in range(N):
+        H -= J * sig_z[i] @ sig_z[(i + 1) % N]
+        H -= B * sig_x[i]
+        H -= g * sig_z[i]
+
+    return H
+
+
+def E_tilted_TFIM_exact_ED(N, J, B, g):
+    """
+    Compute the tilted TFIM ground-state energy by exact sdiagonalization.
+    """
+
+    H = build_H_tilted_TFIM_ED(N, J, B, g)
+
+    E0 = sLA.eigsh(
+        H,
+        k=1,
+        which="SA",
+        return_eigenvectors=False,
+    )[0]
+
+    return np.real(E0)
+

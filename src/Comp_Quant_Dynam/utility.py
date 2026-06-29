@@ -1,3 +1,6 @@
+
+
+
 import numpy as np   # standard numerics library
 from numpy import linalg as LA
 from collections.abc import Iterable, Sequence
@@ -8,6 +11,11 @@ import jax.numpy as jnp
 from flax import linen as nn 
 import optax
 
+import scipy.sparse as sparse
+import scipy.sparse.linalg as sLA
+
+from Comp_Quant_Dynam.operators import n_party_op_sparse
+import Comp_Quant_Dynam.operators as ops
 
 def example_func(x):
     """
@@ -645,9 +653,9 @@ def run_vmc_training(
         key, sample_key = jax.random.split(key)
 
         samples = MCMC_Sampler_Metropolis_Hastings(
-            model=model,
-            params=params,
-            init_state=init_state,
+            model,
+            params,
+            init_state,
             num_samples=N_MC,
             PRNGkey=sample_key,
         )
@@ -656,10 +664,136 @@ def run_vmc_training(
         init_state = samples[-1]
 
         E_var, grads = energy_and_gradient(
+            params,
+            samples,
+            model,
+            B,
+        )
+
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+
+        energies.append(float(E_var))
+
+        if it % 20 == 0:
+            print(f"Iteration {it:4d} | E_var = {float(E_var):.6f}")
+
+    return params, energies
+
+
+def local_energy_tilted_TFIM(params, s, model, J, B, g):
+    """
+    Local energy for tilted TFIM using 0/1 spin configurations.
+
+    H = -J sum_i sigma_z_i sigma_z_{i+1}
+        -B sum_i sigma_x_i
+        -g sum_i sigma_z_i
+    """
+
+    # Convert 0/1 spins to -1/+1 sigma_z eigenvalues
+    z = 2 * s - 1
+
+    # Diagonal part: -J zz - g z
+    E_diag = -J * jnp.sum(z * jnp.roll(z, -1))
+    E_diag += -g * jnp.sum(z)
+
+    # Off-diagonal part: -B sx
+    logpsi_s = model.apply(params, s)
+    N = s.shape[0]
+
+    def flip_spin(i):
+        return s.at[i].set(1.0 - s[i])
+
+    flipped_states = jax.vmap(flip_spin)(jnp.arange(N))
+
+    logpsi_flipped = jax.vmap(
+        lambda sf: model.apply(params, sf)
+    )(flipped_states)
+
+    ratios = jnp.exp(logpsi_flipped - logpsi_s)
+
+    E_offdiag = -B * jnp.sum(ratios)
+
+    return jnp.real(E_diag + E_offdiag)
+
+def energy_and_gradient_tilted(params, samples, model, J, B, g):
+    """
+    Compute VMC energy and gradient for the tilted TFIM.
+    """
+
+    E_loc = jax.vmap(
+        lambda s: local_energy_tilted_TFIM(params, s, model, J, B, g)
+    )(samples)
+
+    E_mean = jnp.mean(E_loc)
+
+    centered_E = jax.lax.stop_gradient(E_loc - E_mean)
+
+    def logpsi_fn(p, s):
+        return model.apply(p, s)
+
+    O_tree = jax.vmap(
+        jax.grad(logpsi_fn),
+        in_axes=(None, 0)
+    )(params, samples)
+
+    def grad_leaf(O):
+        shape = (-1,) + (1,) * (O.ndim - 1)
+        centered = centered_E.reshape(shape)
+
+        return 2.0 * jnp.real(
+            jnp.mean(jnp.conj(O) * centered, axis=0)
+        )
+
+    grads = jax.tree_util.tree_map(grad_leaf, O_tree)
+
+    return E_mean, grads
+
+def run_vmc_training_tilted(
+    model,
+    N_spins,
+    J,
+    B,
+    g,
+    N_MC,
+    num_iterations,
+    lr,
+    seed,
+):
+    """
+    Run VMC ground-state search for the tilted TFIM.
+    """
+
+    key = jax.random.PRNGKey(seed)
+
+    init_state = jnp.ones((N_spins,))
+    params = model.init(key, init_state)
+
+    optimizer = optax.adam(learning_rate=lr)
+    opt_state = optimizer.init(params)
+
+    energies = []
+
+    for it in range(num_iterations):
+        key, sample_key = jax.random.split(key)
+
+        samples = MCMC_Sampler_Metropolis_Hastings(
+            model=model,
+            params=params,
+            init_state=init_state,
+            num_samples=N_MC,
+            PRNGkey=sample_key,
+        )
+
+        init_state = samples[-1]
+
+        E_var, grads = energy_and_gradient_tilted(
             params=params,
             samples=samples,
             model=model,
+            J=J,
             B=B,
+            g=g,
         )
 
         updates, opt_state = optimizer.update(grads, opt_state, params)
