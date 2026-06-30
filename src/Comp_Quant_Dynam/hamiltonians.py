@@ -468,4 +468,6 @@ def E_tilted_TFIM_exact_ED(N, J, B, g):
     )[0]
 
     return np.real(E0)
+    
+###################### Solution sheet 11 ######################
 

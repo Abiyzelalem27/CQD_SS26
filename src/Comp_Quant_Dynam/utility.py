@@ -14,9 +14,8 @@ import optax
 import scipy.sparse as sparse
 import scipy.sparse.linalg as sLA
 
-from Comp_Quant_Dynam.operators import n_party_op_sparse
-import Comp_Quant_Dynam.operators as ops
-
+from Comp_Quant_Dynam.operators import n_party_op_sparse, lambda_jump_operators,  build_liouvillian
+import Comp_Quant_Dynam.operators as ops 
 
 
 
@@ -810,4 +809,153 @@ def run_vmc_training_tilted(
 
     return params, energies
 
+###################### Solution sheet 11 ###################### 
 
+def lambda_hamiltonian(Omega_p, Omega_c, Delta_p, Delta_c):
+    """
+    Hamiltonian for the 3-level lambda system.
+
+    Basis order:
+    |g1>, |g2>, |e>
+
+    delta_2 = Delta_p - Delta_c
+    """
+
+    delta_2 = Delta_p - Delta_c
+
+    H = np.array([
+        [0,             0,          -Omega_p / 2],
+        [0,             delta_2,    -Omega_c / 2],
+        [-Omega_p / 2,  -Omega_c / 2, Delta_p]
+    ], dtype=complex)
+
+    return H 
+    
+def tr_reduce_L(L_mat):
+    """
+    Reduces the Liouvillian matrix `L_mat` to account for the trace condition Tr(rho) = 1 when solving for the steady state density matrix.
+    The function constructs a reduced Liouvillian matrix `L_mat_red` and a corresponding vector `b_vec` such that the steady state can be found by solving the linear system L_mat_red * rho_ss = b_vec. The reduction is performed by eliminating the first row and column of the Liouvillian matrix and adjusting the last column to account for the trace condition.
+    """
+    
+    dim_L = len(L_mat)
+    dim_H = int(np.sqrt(dim_L))
+    L_mat_red = np.copy(L_mat[1:, 1:])
+    b_vec = np.zeros((dim_L - 1,), dtype='complex')
+    for i in range(1, dim_L):
+        for k in range(1, dim_H):
+            L_mat_red[i - 1, -1 + k * (dim_H + 1)] -= L_mat[i, 0]
+        b_vec[i - 1] = -L_mat[i, 0]
+    return L_mat_red, b_vec
+
+# calculate the steady state, return rho in matrix form
+def rho_ss(L_mat):
+    """
+    Calculate the steady state density matrix for a given Liouvillian matrix `L_mat`. The steady state is obtained by solving the linear system L * rho_ss = 0, subject to the trace condition Tr(rho_ss) = 1.
+    The function first reduces the Liouvillian matrix to account for the trace condition, then solves the resulting linear system to find the steady state vector, which is reshaped into a density matrix form.
+    """
+
+    dim_L = len(L_mat)
+    dim_H = int(np.sqrt(dim_L))
+    L_mat_red, b_vec = tr_reduce_L(L_mat)
+    ss = LA.solve(L_mat_red, b_vec)
+    ss_full = np.zeros((dim_L,), dtype='complex')
+    ss_full[0] = 1
+    for k in range(1, dim_H):
+        ss_full[0] -= ss[-1 + k * (dim_H + 1)]
+    ss_full[1:] = ss
+    ss_mat = ss_full.reshape((dim_H, dim_H))
+    return ss_mat
+
+
+
+def steady_state_lambda(
+    Omega_p,
+    Omega_c,
+    Delta_p,
+    Delta_c,
+    gamma_p,
+    gamma_c,
+    gamma_g
+):
+    """
+    Calculate the full steady-state density matrix for the lambda system.
+    """
+
+    H = lambda_hamiltonian(
+        Omega_p,
+        Omega_c,
+        Delta_p,
+        Delta_c
+    )
+
+    jumps = lambda_jump_operators(
+        gamma_p,
+        gamma_c,
+        gamma_g
+    )
+
+    L = build_liouvillian(H, jumps)
+
+    rho = rho_ss(L)
+
+    return rho
+
+
+def steady_rho_eg1(
+    Delta_p,
+    Omega_p,
+    Omega_c,
+    Delta_c,
+    gamma_p,
+    gamma_c,
+    gamma_g
+):
+    """
+    Calculate steady-state coherence rho_eg1 = <e|rho|g1>.
+
+    Basis order:
+    |g1>, |g2>, |e>
+
+    Therefore rho_eg1 = rho[2, 0].
+    """
+
+    rho = steady_state_lambda(
+        Omega_p,
+        Omega_c,
+        Delta_p,
+        Delta_c,
+        gamma_p,
+        gamma_c,
+        gamma_g
+    )
+
+    return rho[2, 0]
+
+
+def scan_rho_eg1(
+    Delta_p_values,
+    Omega_p,
+    Omega_c,
+    Delta_c,
+    gamma_p,
+    gamma_c,
+    gamma_g
+):
+    """
+    Scan Delta_p and return rho_eg1 values.
+    """
+
+    rho_values = np.array([
+        steady_rho_eg1(
+            Delta_p,
+            Omega_p,
+            Omega_c,
+            Delta_c,
+            gamma_p,
+            gamma_c,
+            gamma_g
+        )
+        for Delta_p in Delta_p_values
+    ])
+
+    return rho_values 
