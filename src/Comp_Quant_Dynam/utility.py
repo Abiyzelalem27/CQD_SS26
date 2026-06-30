@@ -17,6 +17,9 @@ import scipy.sparse.linalg as sLA
 from Comp_Quant_Dynam.operators import n_party_op_sparse
 import Comp_Quant_Dynam.operators as ops
 
+
+
+
 def example_func(x):
     """
     Example function to demonstrate the repository structure.
@@ -398,6 +401,7 @@ def n_party_idx2state(idx, local_dim, N):
 
     
     return np.int64((state - (local_dim - 1) / 2)) # invert #-1 * 
+
 
 
 ###################### Solution sheet 10 ######################
@@ -805,3 +809,5 @@ def run_vmc_training_tilted(
             print(f"Iteration {it:4d} | E_var = {float(E_var):.6f}")
 
     return params, energies
+
+

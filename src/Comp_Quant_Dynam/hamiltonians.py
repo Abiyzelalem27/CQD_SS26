@@ -408,6 +408,7 @@ def build_H_AKLT(N, theta=np.arctan(1 / 3), open_bc=False):
     return H_mat
 
 
+
 ###################### Solution sheet 10 ######################
 
 def build_H_tilted_TFIM_ED(N, J, B, g):
