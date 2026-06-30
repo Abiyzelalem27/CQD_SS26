@@ -3,10 +3,11 @@
 
 import numpy as np   # standard numerics library
 from numpy import linalg as LA
+from scipy.linalg import expm
 from collections.abc import Iterable, Sequence
 from numpy import pi, sin, cos, tan, arcsin, arccos, arctan, sqrt, exp
 from scipy.special import factorial, binom
-import jax
+import jax 
 import jax.numpy as jnp
 from flax import linen as nn 
 import optax
@@ -16,8 +17,7 @@ import scipy.sparse.linalg as sLA
 
 from Comp_Quant_Dynam.operators import n_party_op_sparse, lambda_jump_operators,  build_liouvillian
 import Comp_Quant_Dynam.operators as ops 
-
-
+from scipy.integrate import solve_ivp 
 
 def example_func(x):
     """
@@ -629,29 +629,17 @@ class NQS_FFNN(nn.Module):
 
         return x[..., 0]
 
-def run_vmc_training(
-    model,
-    N_spins,
-    B,
-    N_MC,
-    num_iterations,
-    lr,
-    seed,
-):
+def run_vmc_training( model, N_spins, B, N_MC, num_iterations, lr, seed):
     """
     Run VMC ground-state search for a given variational model.
     """
-
     key = jax.random.PRNGKey(seed)
-
     init_state = jnp.ones((N_spins,))
     params = model.init(key, init_state)
-
     optimizer = optax.adam(learning_rate=lr)
     opt_state = optimizer.init(params)
 
     energies = []
-
     for it in range(num_iterations):
         key, sample_key = jax.random.split(key)
 
@@ -868,48 +856,18 @@ def rho_ss(L_mat):
 
 
 
-def steady_state_lambda(
-    Omega_p,
-    Omega_c,
-    Delta_p,
-    Delta_c,
-    gamma_p,
-    gamma_c,
-    gamma_g
-):
+def steady_state_lambda(Omega_p, Omega_c, Delta_p, Delta_c, gamma_p, gamma_c, gamma_g):
     """
     Calculate the full steady-state density matrix for the lambda system.
     """
-
-    H = lambda_hamiltonian(
-        Omega_p,
-        Omega_c,
-        Delta_p,
-        Delta_c
-    )
-
-    jumps = lambda_jump_operators(
-        gamma_p,
-        gamma_c,
-        gamma_g
-    )
-
+    H = lambda_hamiltonian(Omega_p, Omega_c, Delta_p, Delta_c)
+    jumps = lambda_jump_operators(gamma_p, gamma_c, gamma_g)
     L = build_liouvillian(H, jumps)
-
     rho = rho_ss(L)
-
     return rho
 
 
-def steady_rho_eg1(
-    Delta_p,
-    Omega_p,
-    Omega_c,
-    Delta_c,
-    gamma_p,
-    gamma_c,
-    gamma_g
-):
+def steady_rho_eg1(Delta_p, Omega_p, Omega_c, Delta_c, gamma_p, gamma_c, gamma_g):
     """
     Calculate steady-state coherence rho_eg1 = <e|rho|g1>.
 
@@ -918,44 +876,140 @@ def steady_rho_eg1(
 
     Therefore rho_eg1 = rho[2, 0].
     """
-
-    rho = steady_state_lambda(
-        Omega_p,
-        Omega_c,
-        Delta_p,
-        Delta_c,
-        gamma_p,
-        gamma_c,
-        gamma_g
-    )
-
+    rho = steady_state_lambda(Omega_p, Omega_c, Delta_p,Delta_c, gamma_p, gamma_c, gamma_g)
     return rho[2, 0]
 
 
-def scan_rho_eg1(
-    Delta_p_values,
-    Omega_p,
-    Omega_c,
-    Delta_c,
-    gamma_p,
-    gamma_c,
-    gamma_g
-):
+def scan_rho_eg1(Delta_p_values, Omega_p, Omega_c, Delta_c,gamma_p,gamma_c, gamma_g):
     """
     Scan Delta_p and return rho_eg1 values.
     """
+    rho_values = np.array([steady_rho_eg1(Delta_p, Omega_p, Omega_c, Delta_c, gamma_p, gamma_c, gamma_g)
+        for Delta_p in Delta_p_values])
+    return rho_values
 
-    rho_values = np.array([
-        steady_rho_eg1(
-            Delta_p,
-            Omega_p,
-            Omega_c,
-            Delta_c,
-            gamma_p,
-            gamma_c,
-            gamma_g
-        )
-        for Delta_p in Delta_p_values
-    ])
+def evolve_master_equation(L_mat, rho0, t_eval):
+    """
+    Solve the time-dependent master equation:
 
-    return rho_values 
+        d rho_vec / dt = L_mat rho_vec
+
+    Inputs:
+    L_mat  : Liouvillian matrix
+    rho0   : initial density matrix
+    t_eval : array of times
+
+    """
+    dim_H = rho0.shape[0]
+    rho0_vec = rho0.reshape(dim_H * dim_H)
+    def rhs(t, rho_vec):
+        return L_mat @ rho_vec
+
+    sol = solve_ivp(
+        rhs,
+        (t_eval[0], t_eval[-1]),
+        rho0_vec,
+        t_eval=t_eval,
+        rtol=1e-9,
+        atol=1e-11
+    )
+
+    rho_t = sol.y.T.reshape((len(t_eval), dim_H, dim_H))
+    return sol.t, rho_t 
+
+def mcwf_trajectory(H,jumps, psi0, t_eval,seed=None,allow_jumps=True):
+    """
+    Calculate one Monte Carlo wave function trajectory.
+
+    H      : Hamiltonian
+    jumps  : list of jump operators
+    psi0   : initial state vector
+    t_eval : time array
+    """
+
+    rng = np.random.default_rng(seed)
+    dim_H = H.shape[0]
+    psi = np.array(psi0, dtype=complex)
+    psi = psi / np.sqrt(np.vdot(psi, psi).real)
+    psis = np.zeros((len(t_eval), dim_H), dtype=complex)
+    psis[0] = psi
+    jump_times = []
+    jump_channels = []
+
+    # effective non-Hermitian Hamiltonian
+    CdagC_sum = np.zeros_like(H, dtype=complex)
+
+    for C in jumps:
+        CdagC_sum += C.conj().T @ C
+    H_eff = H - 0.5j * CdagC_sum
+
+    for n in range(len(t_eval) - 1):
+        dt = t_eval[n + 1] - t_eval[n]
+        U_eff = expm(-1j * H_eff * dt)
+        psi_no_jump = U_eff @ psi
+        norm2 = np.vdot(psi_no_jump, psi_no_jump).real
+        p_jump = 1.0 - norm2
+        p_jump = np.clip(p_jump, 0.0, 1.0)
+        
+        if allow_jumps and rng.random() < p_jump:
+            rates = np.array([
+                np.vdot(C @ psi, C @ psi).real
+                for C in jumps
+            ])
+
+            rate_sum = np.sum(rates)
+
+            if rate_sum > 0:
+                probabilities = rates / rate_sum
+                jump_index = rng.choice(len(jumps), p=probabilities)
+                psi = jumps[jump_index] @ psi
+                psi = psi / np.sqrt(np.vdot(psi, psi).real)
+                jump_times.append(t_eval[n + 1])
+                jump_channels.append(jump_index)
+
+            else:
+                psi = psi_no_jump / np.sqrt(norm2)
+
+        else:
+            psi = psi_no_jump / np.sqrt(norm2)
+
+        psis[n + 1] = psi
+
+    populations = np.abs(psis)**2
+    rho_eg1 = psis[:, 2] * np.conj(psis[:, 0])
+
+    result = {
+        "t": t_eval,
+        "psi": psis,
+        "populations": populations,
+        "rho_eg1": rho_eg1,
+        "jump_times": np.array(jump_times),
+        "jump_channels": np.array(jump_channels)
+    }
+
+    return result
+
+
+def mcwf_average(H, jumps, psi0, t_eval, ntraj, seed=None):
+    """
+    Average observables over many Monte Carlo wave function trajectories.
+    """
+
+    rng = np.random.default_rng(seed)
+    dim_H = H.shape[0]
+    populations_avg = np.zeros((len(t_eval), dim_H), dtype=float)
+    rho_eg1_avg = np.zeros(len(t_eval), dtype=complex)
+
+    trajectories = []
+    for n in range(ntraj):
+        traj_seed = rng.integers(0, 2**32 - 1)
+        traj = mcwf_trajectory(H, jumps, psi0, t_eval, seed=traj_seed, allow_jumps=True)
+        populations_avg += traj["populations"]
+        rho_eg1_avg += traj["rho_eg1"]
+        trajectories.append(traj)
+
+    populations_avg = populations_avg / ntraj
+    rho_eg1_avg = rho_eg1_avg / ntraj
+    result = { "t": t_eval, "populations": populations_avg,"rho_eg1": rho_eg1_avg, "trajectories": trajectories }
+
+    return result
