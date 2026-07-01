@@ -28,11 +28,14 @@ test = [
     "nbconvert",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 
 [tool.coverage.run]
 omit = [
     "*/tests/*",
     "*/Comp_Quant_Dynam/__init__.py",
-] 
+]
