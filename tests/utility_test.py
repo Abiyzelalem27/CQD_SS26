@@ -1,3 +1,5 @@
+
+
 import numpy as np
 import Comp_Quant_Dynam.utility as util
 import Comp_Quant_Dynam.operators as ops
@@ -384,4 +386,3 @@ class Test_n_party_idx2state:
         expected_state = [-1, -1, -1, 0, -1, 1]
         state = util.n_party_idx2state(idx, local_dim, N)
         assert np.allclose(state, expected_state)
-

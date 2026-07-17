@@ -1,3 +1,5 @@
+
+
 import numpy as np
 import numpy.linalg as LA
 from scipy.sparse.linalg import eigsh
@@ -517,3 +519,38 @@ class Test_build_H_AKLT:
         evals.sort()
         gap = evals[1] - evals[0]
         assert gap > 0 # check that the energy gap is positive, which means that the ground state is unique and the system is gapped
+
+
+###################### Solution sheet 10 ######################
+
+
+class Test_build_H_tilted_TFIM_individual:
+
+    N = 10
+    
+    def test_build_H_tilted_TFIM_individual_hermitian(self):
+        ome = 0.5
+        g = 0.1
+        tol = 1e-10
+
+        H_tilted = ham.build_H_tilted_TFIM_individual(self.N, ome, g)
+        diff = H_tilted - H_tilted.conj().T
+        
+        assert diff.nnz == 0 or np.max(np.abs(diff.data)) < tol  # check that the difference between H and its conjugate transpose is approximately zero, which means that H is Hermitian
+
+    def test_build_H_tilted_TFIM_individual_no_x_field(self):
+        ome = 0.0
+        g = 0.5
+        H_tilted = ham.build_H_tilted_TFIM_individual(self.N, ome, g)
+        H_diag = H_tilted.diagonal()
+        H_reconstr = ops.diagonal_op_sparse(H_diag)
+        diff = H_reconstr - H_tilted
+        assert np.allclose(diff.data, 0) # check that the off-diagonal elements of H are zero when there is no transverse field and no longitudinal field, which means that the Hamiltonian is diagonal in the computational basis
+
+    def test_build_H_tilted_TFIM_individual_no_z_field(self):
+        ome = 0.5
+        g = 0.0
+        H_tilted = ham.build_H_tilted_TFIM_individual(self.N, ome, g)
+        H_TFIM = ham.build_H_TFIM_individual(self.N, ome)
+        diff = H_TFIM - H_tilted
+        assert np.allclose(diff.data, 0) # check that the off-diagonal elements of H are zero when there is no transverse field and no longitudinal field, which means that the Hamiltonian is diagonal in the computational basis
