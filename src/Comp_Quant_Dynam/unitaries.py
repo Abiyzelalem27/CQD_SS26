@@ -1,3 +1,5 @@
+
+
 import numpy as np   # standard numerics library
 import numpy.linalg as LA
 import time

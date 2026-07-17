@@ -1,3 +1,5 @@
+
+
 import numpy as np
 from scipy import sparse
 
@@ -348,87 +350,3 @@ def corr_func_MPS(N, E_mat, idxs, E_op_arr):
     curr_mat = curr_mat @ np.linalg.matrix_power(E_mat, N - 1 - idxs[-1])
 
     return curr_mat.trace()
-
-###################### Solution sheet 11 ######################
-
-
-def lambda_jump_operators(gamma_p, gamma_c, gamma_g):
-    """
-    Jump operators for the lambda system.
-
-    Basis order:
-    |g1>, |g2>, |e>
-    """
-
-    # Gamma_eg1 = sqrt(gamma_p) |g1><e|
-    Gamma_eg1 = np.array([
-        [0, 0, np.sqrt(gamma_p)],
-        [0, 0, 0],
-        [0, 0, 0]
-    ], dtype=complex)
-
-    # Gamma_eg2 = sqrt(gamma_c) |g2><e|
-    Gamma_eg2 = np.array([
-        [0, 0, 0],
-        [0, 0, np.sqrt(gamma_c)],
-        [0, 0, 0]
-    ], dtype=complex)
-
-    jumps = [Gamma_eg1, Gamma_eg2]
-
-    # Gamma_g2g1 = sqrt(gamma_g) |g1><g2|
-    if gamma_g != 0:
-        Gamma_g2g1 = np.array([
-            [0, np.sqrt(gamma_g), 0],
-            [0, 0, 0],
-            [0, 0, 0]
-        ], dtype=complex)
-
-        jumps.append(Gamma_g2g1)
-
-    return jumps
-
-
-def master_rhs(rho_vec, H, jumps):
-    """
-    Right-hand side of the Lindblad master equation.
-
-    d rho / dt = -i[H,rho] + Lindblad terms
-    """
-
-    dim_H = H.shape[0]
-
-    rho = rho_vec.reshape((dim_H, dim_H))
-
-    drho = -1j * (H @ rho - rho @ H)
-
-    for Gamma in jumps:
-        Gamma_dag = Gamma.conj().T
-        Gamma_dag_Gamma = Gamma_dag @ Gamma
-
-        drho += Gamma @ rho @ Gamma_dag
-        drho -= 0.5 * (Gamma_dag_Gamma @ rho)
-        drho -= 0.5 * (rho @ Gamma_dag_Gamma)
-
-    return drho.reshape(dim_H * dim_H)
-
-
-def build_liouvillian(H, jumps):
-    """
-    Build the Liouvillian matrix L such that
-
-        d rho_vec / dt = L rho_vec
-    """
-
-    dim_H = H.shape[0]
-    dim_L = dim_H * dim_H
-
-    L_mat = np.zeros((dim_L, dim_L), dtype=complex)
-
-    for j in range(dim_L):
-        basis_vec = np.zeros(dim_L, dtype=complex)
-        basis_vec[j] = 1.0
-
-        L_mat[:, j] = master_rhs(basis_vec, H, jumps)
-
-    return L_mat

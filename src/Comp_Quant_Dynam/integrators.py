@@ -1,3 +1,5 @@
+
+
 import numpy as np   # standard numerics library
 import numpy.linalg as LA
 from scipy import sparse
@@ -259,3 +261,13 @@ def get_trajectory(y0, tvec, ome):
         trajectory[i] = r.y
         i += 1
     return trajectory
+
+
+###################### Solution sheet 11 ######################
+
+
+def linblad_master_eq(t, y, L_mat):
+    """
+    Returns the right-hand side of the Lindblad master equation `dy/dt = L_mat @ y` for a density matrix vector `y` and Liouvillian superoperator `L_mat`.
+    """
+    return L_mat @ y # RHS of the ME

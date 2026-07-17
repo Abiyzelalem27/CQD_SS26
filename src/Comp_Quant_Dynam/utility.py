@@ -1,23 +1,15 @@
 
 
-
 import numpy as np   # standard numerics library
 from numpy import linalg as LA
-from scipy.linalg import expm
 from collections.abc import Iterable, Sequence
 from numpy import pi, sin, cos, tan, arcsin, arccos, arctan, sqrt, exp
 from scipy.special import factorial, binom
-import jax 
+import jax
 import jax.numpy as jnp
-from flax import linen as nn 
+import flax.linen as nn
 import optax
 
-import scipy.sparse as sparse
-import scipy.sparse.linalg as sLA
-
-from Comp_Quant_Dynam.operators import n_party_op_sparse, lambda_jump_operators,  build_liouvillian
-import Comp_Quant_Dynam.operators as ops 
-from scipy.integrate import solve_ivp 
 
 def example_func(x):
     """
@@ -402,614 +394,395 @@ def n_party_idx2state(idx, local_dim, N):
     return np.int64((state - (local_dim - 1) / 2)) # invert #-1 * 
 
 
-
 ###################### Solution sheet 10 ######################
 
-class Jastrow(nn.Module):
-    """
-    Short-range Jastrow variational wavefunction.
-
-    The logarithm of a variational wavefunction for ssa one-dimensional spin chain. It includes nearest-neighbour and
-    next-nearest-neighbour spin correlations with trainable parameters J1 and J2.
-
-    log psi(s) = sum_i J1 sigma_i sigma_{i+1} + sum_i J2 sigma_i sigma_{i+2}, where sigma_i = +/- 1.
-    """
-
-    @nn.compact
-    def __call__(self, s):
-        """
-        Evaluate the logarithm of the Jastrow wavefunction.
-
-        Args:
-            s: Spin configuration with entries 0 or 1.
-        """
-
-        sigma_z = 2 * s - 1
-        J1 = self.param("J1", nn.initializers.zeros, ())
-        J2 = self.param("J2", nn.initializers.zeros, ())
-        nn_corr = jnp.sum(
-            sigma_z * jnp.roll(sigma_z, -1, axis=-1),
-            axis=-1,
-        )
-
-        nnn_corr = jnp.sum(
-            sigma_z * jnp.roll(sigma_z, -2, axis=-1),
-            axis=-1,
-        )
-
-        return J1 * nn_corr + J2 * nnn_corr
-        
-             
 
 def MCMC_Sampler_Metropolis_Hastings(model, params, init_state, num_samples, PRNGkey):
     """ 
-    Performs Markov Chain Monte Carlo sampling using the Metropolis-Hastings algorithm.
-
-    The sampler starts from an initial spin configuration and proposes new
-    configurations by flipping random spins. For each saved sample, a full
-    sweep over the spin chain is performed to reduce autocorrelation.
+    Performs Markov Chain Monte Carlo Sampling based on the Metropolis-Hastings algorithm,
+    based on a flax-`model`, starting from initial spin state `init_state`, 
+    by flipping random spins over a full sweep over N_spins.
     """
-
+    
     def MCMC_step(carry, _):
         s, key = carry
 
         num_spins = s.shape[0]
 
         def full_sweep_body(carry, _):
-             # perform a full sweep over N_spins to generate minimally autocorrelated samples
+            # perform a full sweep over N_spins to generate minimally autocorrelated samples 
             s, key = carry
 
             key, key_idx, key_accept = jax.random.split(key, 3)
 
             s_flat = s.ravel()
-
-            # Propose a new state by flipping one random spin
-            idx = jax.random.randint(
-                key_idx,
-                shape=(),
-                minval=0,
-                maxval=num_spins
-            )
-
+            
+            # Propose a new state 
+            idx = jax.random.randint(key_idx, shape=(), minval=0, maxval=num_spins)
             flipped_value = 1 - s_flat[idx]
+
             s_prime_flat = s_flat.at[idx].set(flipped_value)
             s_prime = s_prime_flat.reshape(s.shape)
-
-            # Compute Metropolis-Hastings acceptance probability
-            logpsi_prime = model.apply(params, s_prime)
-            logpsi_current = model.apply(params, s)
-
-            p_accept = jnp.minimum(
-                1.0,
-                jnp.exp(
-                    2 * jnp.real(logpsi_prime)
+        
+            # Probability of accepting the proposed s_prime
+            p_accept = jnp.minimum(1.0, jnp.exp((2 * jnp.real(model.apply(params, s_prime))
                     -
-                    2 * jnp.real(logpsi_current)
-                )
-            )
+                    2 * jnp.real(model.apply(params, s))
+                )) )
 
-            # Accept or reject the proposed state
             u = jax.random.uniform(key_accept)
             accept = u < p_accept
-
             s_next = jnp.where(accept, s_prime, s)
 
             return (s_next, key), None
-
-        # One full sweep: about one attempted update per spin
-        (next_s, next_key), _ = jax.lax.scan(
-            full_sweep_body,
-            (s, key),
-            None,
-            length=num_spins
-        )
+        
+        (next_s, next_key), _ = jax.lax.scan(full_sweep_body, (s, key), None, length=num_samples)
 
         return (next_s, next_key), next_s
 
-    _, samples = jax.lax.scan(
-        MCMC_step,
-        (init_state, PRNGkey),
-        None,
-        length=num_samples
-    )
-
-    return samples
-
-def local_energy_TFIM(params, s, model, B):
-    """
-    Local energy for the 1D transverse-field Ising model:
-
-        H = - sum_i sigma_z_i sigma_z_{i+1} - B sum_i sigma_x_i
-
-    The spin configuration s is represented using 0/1 spins.
-    """
-
-    # Convert 0/1 spins to -1/+1 eigenvalues of sigma_z
-    z = 2 * s - 1
-
-    # Diagonal Ising interaction term
-    E_diag = -jnp.sum(z * jnp.roll(z, -1))
-
-    # Transverse-field term: flip each spin once
-    logpsi_s = model.apply(params, s)
-    N = s.shape[0]
-
-    def flip_spin(i):
-        return s.at[i].set(1.0 - s[i])
-
-    flipped_states = jax.vmap(flip_spin)(jnp.arange(N))
-
-    logpsi_flipped = jax.vmap(
-        lambda sf: model.apply(params, sf)
-    )(flipped_states)
-
-    # psi(s') / psi(s) = exp(logpsi(s') - logpsi(s))
-    ratios = jnp.exp(logpsi_flipped - logpsi_s)
-
-    E_offdiag = -B * jnp.sum(ratios)
-
-    return jnp.real(E_diag + E_offdiag)
-
-
-def energy_and_gradient(params, samples, model, B):
-    """
-    Compute the Monte Carlo variational energy and its VMC gradient:
-
-        grad E = 2 Re[ <O* E_loc> - <O*> <E_loc> ]
-
-    where
-
-        O_k(s) = d log psi(s) / d theta_k.
-    """
-
-    # Local energy for every sampled spin configuration
-    E_loc = jax.vmap(
-        lambda s: local_energy_TFIM(params, s, model, B)
-    )(samples)
-
-    # Monte Carlo estimate of the variational energy
-    E_mean = jnp.mean(E_loc)
-
-    # Centered local energy
-    centered_E = jax.lax.stop_gradient(E_loc - E_mean)
-
-    # Define log psi as a function of parameters and spin configuration
-    def logpsi_fn(p, s):
-        return model.apply(p, s)
-
-    # O_k(s) = d log psi(s) / d theta_k
-    O_tree = jax.vmap(
-        jax.grad(logpsi_fn),
-        in_axes=(None, 0)
-    )(params, samples)
-
-    # Apply the VMC gradient formula to every parameter leaf
-    def grad_leaf(O):
-        shape = (-1,) + (1,) * (O.ndim - 1)
-        centered = centered_E.reshape(shape)
-
-        return 2.0 * jnp.real(
-            jnp.mean(jnp.conj(O) * centered, axis=0)
-        )
-
-    grads = jax.tree_util.tree_map(grad_leaf, O_tree)
-
-    return E_mean, grads 
-
-class NQS_FFNN(nn.Module):
-    """
-    Feed-forward neural-network ansatz for a Neural Quantum State.
-
-    The model takes a spin configuration and returns one real number,
-    corresponding to log psi(s).
-    """
-
-    hidden_dims: tuple = (16,)
-    actfunc: callable = nn.tanh
-
-    @nn.compact
-    def __call__(self, s):
-        # Convert 0/1 spins to -1/+1 spins
-        x = 2 * s - 1
-
-        for hidden_dim in self.hidden_dims:
-            x = nn.Dense(
-                hidden_dim,
-                kernel_init=jax.nn.initializers.lecun_normal(),
-                bias_init=jax.nn.initializers.zeros,
-            )(x)
-            x = self.actfunc(x)
-
-        # Final layer outputs one real number: log psi(s)
-        x = nn.Dense(
-            1,
-            kernel_init=jax.nn.initializers.lecun_normal(),
-            bias_init=jax.nn.initializers.zeros,
-        )(x)
-
-        return x[..., 0]
-
-def run_vmc_training( model, N_spins, B, N_MC, num_iterations, lr, seed):
-    """
-    Run VMC ground-state search for a given variational model.
-    """
-    key = jax.random.PRNGKey(seed)
-    init_state = jnp.ones((N_spins,))
-    params = model.init(key, init_state)
-    optimizer = optax.adam(learning_rate=lr)
-    opt_state = optimizer.init(params)
-
-    energies = []
-    for it in range(num_iterations):
-        key, sample_key = jax.random.split(key)
-
-        samples = MCMC_Sampler_Metropolis_Hastings(
-            model,
-            params,
-            init_state,
-            num_samples=N_MC,
-            PRNGkey=sample_key,
-        )
-
-        # Continue Markov chain from the last sample
-        init_state = samples[-1]
-
-        E_var, grads = energy_and_gradient(
-            params,
-            samples,
-            model,
-            B,
-        )
-
-        updates, opt_state = optimizer.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
-
-        energies.append(float(E_var))
-
-        if it % 20 == 0:
-            print(f"Iteration {it:4d} | E_var = {float(E_var):.6f}")
-
-    return params, energies
-
-
-def local_energy_tilted_TFIM(params, s, model, J, B, g):
-    """
-    Local energy for tilted TFIM using 0/1 spin configurations.
-
-    H = -J sum_i sigma_z_i sigma_z_{i+1}
-        -B sum_i sigma_x_i
-        -g sum_i sigma_z_i
-    """
-
-    # Convert 0/1 spins to -1/+1 sigma_z eigenvalues
-    z = 2 * s - 1
-
-    # Diagonal part: -J zz - g z
-    E_diag = -J * jnp.sum(z * jnp.roll(z, -1))
-    E_diag += -g * jnp.sum(z)
-
-    # Off-diagonal part: -B sx
-    logpsi_s = model.apply(params, s)
-    N = s.shape[0]
-
-    def flip_spin(i):
-        return s.at[i].set(1.0 - s[i])
-
-    flipped_states = jax.vmap(flip_spin)(jnp.arange(N))
-
-    logpsi_flipped = jax.vmap(
-        lambda sf: model.apply(params, sf)
-    )(flipped_states)
-
-    ratios = jnp.exp(logpsi_flipped - logpsi_s)
-
-    E_offdiag = -B * jnp.sum(ratios)
-
-    return jnp.real(E_diag + E_offdiag)
-
-def energy_and_gradient_tilted(params, samples, model, J, B, g):
-    """
-    Compute VMC energy and gradient for the tilted TFIM.
-    """
-
-    E_loc = jax.vmap(
-        lambda s: local_energy_tilted_TFIM(params, s, model, J, B, g)
-    )(samples)
-
-    E_mean = jnp.mean(E_loc)
-
-    centered_E = jax.lax.stop_gradient(E_loc - E_mean)
-
-    def logpsi_fn(p, s):
-        return model.apply(p, s)
-
-    O_tree = jax.vmap(
-        jax.grad(logpsi_fn),
-        in_axes=(None, 0)
-    )(params, samples)
-
-    def grad_leaf(O):
-        shape = (-1,) + (1,) * (O.ndim - 1)
-        centered = centered_E.reshape(shape)
-
-        return 2.0 * jnp.real(
-            jnp.mean(jnp.conj(O) * centered, axis=0)
-        )
-
-    grads = jax.tree_util.tree_map(grad_leaf, O_tree)
-
-    return E_mean, grads
-
-def run_vmc_training_tilted(
-    model,
-    N_spins,
-    J,
-    B,
-    g,
-    N_MC,
-    num_iterations,
-    lr,
-    seed,
-):
-    """
-    Run VMC ground-state search for the tilted TFIM.
-    """
-
-    key = jax.random.PRNGKey(seed)
-
-    init_state = jnp.ones((N_spins,))
-    params = model.init(key, init_state)
-
-    optimizer = optax.adam(learning_rate=lr)
-    opt_state = optimizer.init(params)
-
-    energies = []
-
-    for it in range(num_iterations):
-        key, sample_key = jax.random.split(key)
-
-        samples = MCMC_Sampler_Metropolis_Hastings(
-            model=model,
-            params=params,
-            init_state=init_state,
-            num_samples=N_MC,
-            PRNGkey=sample_key,
-        )
-
-        init_state = samples[-1]
-
-        E_var, grads = energy_and_gradient_tilted(
-            params=params,
-            samples=samples,
-            model=model,
-            J=J,
-            B=B,
-            g=g,
-        )
-
-        updates, opt_state = optimizer.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
-
-        energies.append(float(E_var))
-
-        if it % 20 == 0:
-            print(f"Iteration {it:4d} | E_var = {float(E_var):.6f}")
-
-    return params, energies
-
-###################### Solution sheet 11 ###################### 
-
-def lambda_hamiltonian(Omega_p, Omega_c, Delta_p, Delta_c):
-    """
-    Hamiltonian for the 3-level lambda system.
-
-    Basis order:
-    |g1>, |g2>, |e>
-
-    delta_2 = Delta_p - Delta_c
-    """
-
-    delta_2 = Delta_p - Delta_c
-
-    H = np.array([
-        [0,             0,          -Omega_p / 2],
-        [0,             delta_2,    -Omega_c / 2],
-        [-Omega_p / 2,  -Omega_c / 2, Delta_p]
-    ], dtype=complex)
-
-    return H 
-    
-def tr_reduce_L(L_mat):
-    """
-    Reduces the Liouvillian matrix `L_mat` to account for the trace condition Tr(rho) = 1 when solving for the steady state density matrix.
-    The function constructs a reduced Liouvillian matrix `L_mat_red` and a corresponding vector `b_vec` such that the steady state can be found by solving the linear system L_mat_red * rho_ss = b_vec. The reduction is performed by eliminating the first row and column of the Liouvillian matrix and adjusting the last column to account for the trace condition.
-    """
-    
-    dim_L = len(L_mat)
-    dim_H = int(np.sqrt(dim_L))
-    L_mat_red = np.copy(L_mat[1:, 1:])
-    b_vec = np.zeros((dim_L - 1,), dtype='complex')
-    for i in range(1, dim_L):
-        for k in range(1, dim_H):
-            L_mat_red[i - 1, -1 + k * (dim_H + 1)] -= L_mat[i, 0]
-        b_vec[i - 1] = -L_mat[i, 0]
-    return L_mat_red, b_vec
-
-# calculate the steady state, return rho in matrix form
-def rho_ss(L_mat):
-    """
-    Calculate the steady state density matrix for a given Liouvillian matrix `L_mat`. The steady state is obtained by solving the linear system L * rho_ss = 0, subject to the trace condition Tr(rho_ss) = 1.
-    The function first reduces the Liouvillian matrix to account for the trace condition, then solves the resulting linear system to find the steady state vector, which is reshaped into a density matrix form.
-    """
-
-    dim_L = len(L_mat)
-    dim_H = int(np.sqrt(dim_L))
-    L_mat_red, b_vec = tr_reduce_L(L_mat)
-    ss = LA.solve(L_mat_red, b_vec)
-    ss_full = np.zeros((dim_L,), dtype='complex')
-    ss_full[0] = 1
-    for k in range(1, dim_H):
-        ss_full[0] -= ss[-1 + k * (dim_H + 1)]
-    ss_full[1:] = ss
-    ss_mat = ss_full.reshape((dim_H, dim_H))
-    return ss_mat
-
-
-
-def steady_state_lambda(Omega_p, Omega_c, Delta_p, Delta_c, gamma_p, gamma_c, gamma_g):
-    """
-    Calculate the full steady-state density matrix for the lambda system.
-    """
-    H = lambda_hamiltonian(Omega_p, Omega_c, Delta_p, Delta_c)
-    jumps = lambda_jump_operators(gamma_p, gamma_c, gamma_g)
-    L = build_liouvillian(H, jumps)
-    rho = rho_ss(L)
-    return rho
-
-
-def steady_rho_eg1(Delta_p, Omega_p, Omega_c, Delta_c, gamma_p, gamma_c, gamma_g):
-    """
-    Calculate steady-state coherence rho_eg1 = <e|rho|g1>.
-
-    Basis order:
-    |g1>, |g2>, |e>
-
-    Therefore rho_eg1 = rho[2, 0].
-    """
-    rho = steady_state_lambda(Omega_p, Omega_c, Delta_p,Delta_c, gamma_p, gamma_c, gamma_g)
-    return rho[2, 0]
-
-
-def scan_rho_eg1(Delta_p_values, Omega_p, Omega_c, Delta_c,gamma_p,gamma_c, gamma_g):
-    """
-    Scan Delta_p and return rho_eg1 values.
-    """
-    rho_values = np.array([steady_rho_eg1(Delta_p, Omega_p, Omega_c, Delta_c, gamma_p, gamma_c, gamma_g)
-        for Delta_p in Delta_p_values])
-    return rho_values
-
-def evolve_master_equation(L_mat, rho0, t_eval):
-    """
-    Solve the time-dependent master equation:
-
-        d rho_vec / dt = L_mat rho_vec
-
-    Inputs:
-    L_mat  : Liouvillian matrix
-    rho0   : initial density matrix
-    t_eval : array of times
-
-    """
-    dim_H = rho0.shape[0]
-    rho0_vec = rho0.reshape(dim_H * dim_H)
-    def rhs(t, rho_vec):
-        return L_mat @ rho_vec
-
-    sol = solve_ivp(
-        rhs,
-        (t_eval[0], t_eval[-1]),
-        rho0_vec,
-        t_eval=t_eval,
-        rtol=1e-9,
-        atol=1e-11
-    )
-
-    rho_t = sol.y.T.reshape((len(t_eval), dim_H, dim_H))
-    return sol.t, rho_t 
-
-def mcwf_trajectory(H,jumps, psi0, t_eval,seed=None,allow_jumps=True):
-    """
-    Calculate one Monte Carlo wave function trajectory.
-
-    H      : Hamiltonian
-    jumps  : list of jump operators
-    psi0   : initial state vector
-    t_eval : time array
-    """
-
-    rng = np.random.default_rng(seed)
-    dim_H = H.shape[0]
-    psi = np.array(psi0, dtype=complex)
-    psi = psi / np.sqrt(np.vdot(psi, psi).real)
-    psis = np.zeros((len(t_eval), dim_H), dtype=complex)
-    psis[0] = psi
-    jump_times = []
-    jump_channels = []
-
-    # effective non-Hermitian Hamiltonian
-    CdagC_sum = np.zeros_like(H, dtype=complex)
-
-    for C in jumps:
-        CdagC_sum += C.conj().T @ C
-    H_eff = H - 0.5j * CdagC_sum
-
-    for n in range(len(t_eval) - 1):
-        dt = t_eval[n + 1] - t_eval[n]
-        U_eff = expm(-1j * H_eff * dt)
-        psi_no_jump = U_eff @ psi
-        norm2 = np.vdot(psi_no_jump, psi_no_jump).real
-        p_jump = 1.0 - norm2
-        p_jump = np.clip(p_jump, 0.0, 1.0)
+    _, samples = jax.lax.scan(MCMC_step, (init_state, PRNGkey), None, length=num_samples)
+
+    return samples 
+
+class Jastrow(nn.Module):
+        """
+        A simple Jastrow model entangling nearest and next-to-nearest neighbours (Flax Linen module).
+        The output is log(psi) for a real-valued variational wave function with parameters j1 and j2.
+        """
+
+        @nn.compact
+        def __call__(self, x):     
+            
+            j1 = self.param("j1", jax.nn.initializers.normal(stddev=0.01, dtype=jnp.float32), (1,))
+            j2 = self.param("j2", jax.nn.initializers.normal(stddev=0.01, dtype=jnp.float32), (1,))
+            
+            # x has shape (batch, N)
+            NN_term = x * jnp.roll(x, -1, axis=-1)
+            NNN_term = x * jnp.roll(x, -2, axis=-1)
+
+            log_jastrow = jnp.sum(j1 * NN_term + j2 * NNN_term, axis=-1)
+
+            return log_jastrow
         
-        if allow_jumps and rng.random() < p_jump:
-            rates = np.array([
-                np.vdot(C @ psi, C @ psi).real
-                for C in jumps
-            ])
+class FFNN(nn.Module):
+        """
+        A simple feed forward neural network model without physical prior based on a flax.linen module.
+        The weights are initialized randomly and the biases are set to zero. 
+        The features tuple defines the number of neurons in each layer of the network.
+        One should choose a sensible nonlinear activation function.
+        The output is log(psi) for a real-valued variational wave function.
+        """
 
-            rate_sum = np.sum(rates)
+        features: tuple 
+        out_dim: int 
+        actfunc: callable  # Choose a suitable activation function
 
-            if rate_sum > 0:
-                probabilities = rates / rate_sum
-                jump_index = rng.choice(len(jumps), p=probabilities)
-                psi = jumps[jump_index] @ psi
-                psi = psi / np.sqrt(np.vdot(psi, psi).real)
-                jump_times.append(t_eval[n + 1])
-                jump_channels.append(jump_index)
+        @nn.compact
+        def __call__(self, x):     
+            
+            for feat in self.features:
+                x = self.actfunc(nn.Dense(feat, 
+                                          kernel_init=jax.nn.initializers.lecun_normal(),
+                                          bias_init=jax.nn.initializers.zeros, 
+                                          param_dtype=jnp.float32)(x))
+                
+            out = nn.Dense(self.out_dim, kernel_init=jax.nn.initializers.lecun_normal(),
+                          bias_init=jax.nn.initializers.zeros)(x)    
+            
 
-            else:
-                psi = psi_no_jump / np.sqrt(norm2)
-
-        else:
-            psi = psi_no_jump / np.sqrt(norm2)
-
-        psis[n + 1] = psi
-
-    populations = np.abs(psis)**2
-    rho_eg1 = psis[:, 2] * np.conj(psis[:, 0])
-
-    result = {
-        "t": t_eval,
-        "psi": psis,
-        "populations": populations,
-        "rho_eg1": rho_eg1,
-        "jump_times": np.array(jump_times),
-        "jump_channels": np.array(jump_channels)
-    }
-
-    return result
-
-
-def mcwf_average(H, jumps, psi0, t_eval, ntraj, seed=None):
+            return out[..., 0]
+        
+def psi_theta(model, params, spin):
     """
-    Average observables over many Monte Carlo wave function trajectories.
+    Computes the wave function amplitude psi_theta for a given (flax-based) variational model for a single spin string.
+    """
+    log_psi = model.apply(params, spin)
+    psi_theta = jnp.exp(log_psi)
+    return psi_theta
+
+def logpsi_star_theta(model, params, spin):
+    """
+    Computes the complex conjugate of the logarithmic wave function amplitude for a given (flax-based) variational model for a single spin string.
+    """
+    log_psi = model.apply(params, spin)
+    return jnp.conj(log_psi)
+
+def p_theta(model, params, spin):
+    """
+    Computes the Born distribution for a given (flax-based) variational model.
+    """
+    p_theta = jnp.abs(psi_theta(model, params, spin))**2
+    return p_theta
+
+def grad_E_theta_MC_TFIM(B, model, params, spin_samples):
+    """
+    Computes the variational energy gradient of the 1D transverse field Ising model, for a given set of field strength B, model, parameters and set of spin samples.
+    It is important to use the physical spin values for computing the energy.
     """
 
-    rng = np.random.default_rng(seed)
-    dim_H = H.shape[0]
-    populations_avg = np.zeros((len(t_eval), dim_H), dtype=float)
-    rho_eg1_avg = np.zeros(len(t_eval), dtype=complex)
+    _, unravel_fn = jax.flatten_util.ravel_pytree(params)
 
-    trajectories = []
-    for n in range(ntraj):
-        traj_seed = rng.integers(0, 2**32 - 1)
-        traj = mcwf_trajectory(H, jumps, psi0, t_eval, seed=traj_seed, allow_jumps=True)
-        populations_avg += traj["populations"]
-        rho_eg1_avg += traj["rho_eg1"]
-        trajectories.append(traj)
+    def get_Eloc(s, B):
 
-    populations_avg = populations_avg / ntraj
-    rho_eg1_avg = rho_eg1_avg / ntraj
-    result = { "t": t_eval, "populations": populations_avg,"rho_eg1": rho_eg1_avg, "trajectories": trajectories }
+        # Compute the local energy estimate from the Hamiltonian 
+        s_phys = 1.0 - 2.0 * s
+        int_energy = -jnp.sum(s_phys * jnp.roll(s_phys, -1)) #energy from interactions
 
-    return result
+
+        def single_flip_energy(i):
+            flipped_value = 1 - s[i]
+            s_flipped = s.at[i].set(flipped_value)
+            psi_frac = jnp.exp(model.apply(params, s_flipped) - model.apply(params, s))
+            return psi_frac
+        
+        
+        flip_ratios = jax.vmap(single_flip_energy)(jnp.arange(0, s.shape[0]))
+        B_field_energy = - B * jnp.sum(flip_ratios) # energy contribution from the transverse field
+
+        
+        Eloc = int_energy + B_field_energy
+        
+        return Eloc
+    
+    # Compute the local energy in a vectorized way over a batch of samples
+    Eloc_vals = jax.vmap(get_Eloc, in_axes=(0,None))(spin_samples, B)
+    E_theta = jnp.mean(Eloc_vals, axis=0)
+
+
+    grad_func = jax.grad(lambda p, s: jnp.real(logpsi_star_theta(model, p, s)), argnums=0)
+    grad_batched = jax.vmap(lambda s: grad_func(params, s))
+    grads = grad_batched(spin_samples)
+
+    flat_grads = jax.vmap(lambda g: jax.flatten_util.ravel_pytree(g)[0])(grads) # with the shape (N,P)
+
+    var_grad_centered = flat_grads - jnp.mean(flat_grads, axis=0)
+    Eloc_centered = Eloc_vals - E_theta
+
+
+    grad_E_theta = 2 * jnp.real(jnp.mean(var_grad_centered * Eloc_centered[:, None], axis=0))
+
+    grad_E_theta = unravel_fn(grad_E_theta)
+
+    return jnp.real(E_theta), grad_E_theta
+
+def perform_gs_search(model, N_spins, init_params, B, num_iters, N_MC, lr, key):
+    """ 
+    Performs a variational ground state search for the 1D TFIM for num_iters iterations and learning rate lr. 
+    init_params are the initial random variational parameters.
+    """
+
+    energy_history = [] # Empty list for collecting the variational energies
+    params = init_params
+
+    # Set up the optimizer and initiate it with learning rate lr
+    optimizer = optax.adabelief(learning_rate=lr)
+    opt_state = optimizer.init(params)
+
+    @jax.jit
+    def train_step(params, spin_samples, opt_state):
+        Evar, grad_E = grad_E_theta_MC_TFIM(B, model, params, spin_samples)
+        updates, opt_state =optimizer.update(grad_E, opt_state, params)
+        params_next = optax.apply_updates(params, updates)
+        return params_next, opt_state, Evar
+    
+    state = jnp.ones((N_spins,), dtype=jnp.int32)
+
+    for i in range(num_iters):
+
+        key, subkey = jax.random.split(key, 2)
+
+        # For each iteration draw a sample of N_MC random spins 
+        spin_samples = MCMC_Sampler_Metropolis_Hastings(
+            model=model,
+            params=params,
+            init_state = state,
+            num_samples=N_MC,
+            PRNGkey=subkey)
+
+        state = spin_samples[-1]
+        
+        params, opt_state, Evar = train_step(params, spin_samples, opt_state)
+        
+        energy_history.append(Evar) # Save the variational energy at every iteration
+
+        if i % 50 == 0 or i == num_iters - 1:
+            print(f"Iteration {i:4d} | Variational Energy: {Evar:.6f}")
+
+    return params, energy_history
+
+def grad_E_theta_MC_tilted_TFIM(B, g, model, params, spin_samples):
+    """
+    Computes the variational energy gradient of the 1D tilted transverse field Ising model, for a given set of transverse field strength B, longitudinal field strength g,
+    model, parameters and set of spin samples.
+    It is important to use the physical spin values for computing the energy.
+    """
+
+    _, unravel_fn = jax.flatten_util.ravel_pytree(params)
+
+    def get_Eloc(s, B, g):
+
+        # Compute the local energy estimate from the Hamiltonian 
+        s_phys = 1.0 - 2.0 * s
+        int_energy = -jnp.sum(s_phys * jnp.roll(s_phys, -1)) #energy from interactions
+
+
+        def single_flip_energy(i):
+            flipped_value = 1 - s[i]
+            s_flipped = s.at[i].set(flipped_value)
+            psi_frac = jnp.exp(model.apply(params, s_flipped) - model.apply(params, s))
+            return psi_frac
+        
+        
+        flip_ratios = jax.vmap(single_flip_energy)(jnp.arange(0, s.shape[0]))
+        B_field_energy = - B * jnp.sum(flip_ratios) # energy contribution from the transverse field
+        g_field_energy = - g * jnp.sum(s_phys) # energy contribution from the longitudinal field
+        
+        Eloc = int_energy + B_field_energy + g_field_energy
+        
+        return Eloc
+    
+
+    Eloc_vals = jax.vmap(get_Eloc, in_axes=(0, None, None))(spin_samples, B, g)
+    E_theta = jnp.mean(Eloc_vals, axis=0)
+
+    grad_func = jax.grad(lambda p, s: jnp.real(logpsi_star_theta(model, p, s)), argnums=0)
+    grad_batched = jax.vmap(lambda s: grad_func(params, s))
+    grads = grad_batched(spin_samples)
+
+    flat_grads = jax.vmap(lambda g: jax.flatten_util.ravel_pytree(g)[0])(grads) # with the shape (N,P)
+
+    var_grad_centered = flat_grads - jnp.mean(flat_grads, axis=0)
+    Eloc_centered = Eloc_vals - E_theta
+
+
+    grad_E_theta = 2 * jnp.real(jnp.mean(var_grad_centered * Eloc_centered[:, None], axis=0))
+
+    grad_E_theta = unravel_fn(grad_E_theta)
+
+    return jnp.real(E_theta), grad_E_theta
+
+def perform_gs_search_tilted(model, init_params, N_spins, B, g, num_iters, N_MC, lr, key):
+    """ 
+    Performs a variational ground state search for the 1D tilted TFIM for num_iters iterations and learning rate lr
+    for a given set of transverse field strength B, longitudinal field strength g,
+    model, parameters and set of spin samples.
+    init_params are the initial random variational parameters.
+    """
+
+    energy_history = [] # Empty list for collecting the variational energies
+    params = init_params
+
+    # Set up the optimizer and initiate it with learning rate lr
+    optimizer = optax.adabelief(learning_rate=lr)
+    opt_state = optimizer.init(params)
+
+    @jax.jit
+    def train_step(params, spin_samples, opt_state):
+        Evar, grad_E = grad_E_theta_MC_tilted_TFIM(B, g, model, params, spin_samples)
+        updates, opt_state =optimizer.update(grad_E, opt_state, params)
+        params_next = optax.apply_updates(params, updates)
+        return params_next, opt_state, Evar
+    
+    state = jnp.ones((N_spins,), dtype=jnp.int32)
+
+    for i in range(num_iters):
+
+        key, subkey = jax.random.split(key, 2)
+
+        # For each iteration draw a sample of N_MC random spins 
+        spin_samples = MCMC_Sampler_Metropolis_Hastings(
+            model=model,
+            params=params,
+            init_state = state,
+            num_samples=N_MC,
+            PRNGkey=subkey)
+
+        state = spin_samples[-1]
+        
+        params, opt_state, Evar = train_step(params, spin_samples, opt_state)
+        
+        energy_history.append(Evar) # Save the variational energy at every iteration
+
+        if i % 100 == 0 or i == num_iters - 1:
+            print(f"Iteration {i:4d} | Variational Energy: {Evar:.6f}")
+
+    return params, energy_history
+
+
+def perform_gs_search_tilted_GPU_accelerated(model, init_params, N_spins, B, g, num_iters, N_MC, lr, key):
+    """ 
+    Performs a variational ground state search for the 1D tilted TFIM for num_iters iterations and learning rate lr
+    for a given set of transverse field strength B, longitudinal field strength g,
+    model, parameters and set of spin samples.
+    init_params are the initial random variational parameters.
+
+    This function is written purely using jax.lax loops and thus can run in a fully accelerated way on a GPU device.
+    """
+
+    energy_history = [] # Empty list for collecting the variational energies
+    params = init_params
+
+    # Set up the optimizer and initiate it with learning rate lr
+    optimizer = optax.adabelief(learning_rate=lr)
+    opt_state = optimizer.init(params)
+
+    @jax.jit 
+    def train_step(params, spin_samples, opt_state):
+        Evar, grad_E = grad_E_theta_MC_tilted_TFIM(B, g, model, params, spin_samples)
+        updates, opt_state =optimizer.update(grad_E, opt_state, params)
+        params_next = optax.apply_updates(params, updates)
+        return params_next, opt_state, Evar
+    
+    init_spin_state = jnp.ones((N_spins,), dtype=jnp.int32)
+
+    def scan_step(carry, step_idx):
+        params, opt_state, spin_state, key = carry
+
+        next_key, subkey = jax.random.split(key, 2)
+
+        # For each iteration draw a sample of N_MC random spins 
+        spin_samples = MCMC_Sampler_Metropolis_Hastings(
+            model=model,
+            params=params,
+            init_state = spin_state,
+            num_samples=N_MC,
+            PRNGkey=subkey)
+
+        next_spin_state = spin_samples[-1]
+        
+        next_params, next_opt_state, Evar = train_step(params, spin_samples, opt_state)
+
+        def print_fn():
+            jax.debug.print("Iteration {i:4d} | Variational Energy: {E:.6f}", i=step_idx, E=Evar)
+            
+        # Conditionally execute the print statement
+        jax.lax.cond(
+            (step_idx % 50 == 0) | (step_idx == num_iters - 1),
+            print_fn,
+            lambda: None
+        )
+
+        next_carry = (next_params, next_opt_state, next_spin_state, next_key)
+
+        return next_carry, Evar
+    
+    initial_carry = (init_params, opt_state, init_spin_state, key)
+
+    final_carry, energy_history = jax.lax.scan(scan_step, initial_carry, jnp.arange(num_iters))
+
+    final_params, _, _, _ = final_carry
+
+    return final_params, energy_history
+
+
+###################### Solution sheet 11 ######################
+
+
+def pij(dim, i, j):
+    """
+    Constructs a matrix operator that has a 1 at the (i, j) position and 0 elsewhere, in a Hilbert space of dimension `dim`.
+    """
+
+    operator = np.zeros((dim, dim), dtype=complex)
+    operator[i, j] = 1
+    return operator

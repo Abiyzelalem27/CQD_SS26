@@ -1,8 +1,7 @@
+
+
 import numpy as np   # standard numerics library
 import math
-import scipy.sparse.linalg as sLA
-import jax
-import jax.numpy as jnp
 from scipy.special import hermite as herm
 import scipy.sparse as sparse # routines for sparse matrices
 
@@ -408,66 +407,48 @@ def build_H_AKLT(N, theta=np.arctan(1 / 3), open_bc=False):
     return H_mat
 
 
-
 ###################### Solution sheet 10 ######################
 
-def build_H_tilted_TFIM_ED(N, J, B, g):
+
+def build_H_tilted_TFIM_individual(N, omega, g):
     """
-    Build the tilted 1D TFIM Hamiltonian:
-
-        H = -J sum_i sigma_z_i sigma_z_{i+1}
-            -B sum_i sigma_x_i
-            -g sum_i sigma_z_i
-
-    using periodic boundary conditions.
+    Builds the Hamiltonian matrix for the tilted transverse field Ising model (TFIM) for `N` spin-1/2 particles and transverse field strength `omega` and longitudinal field strength `g` as a sparse matrix
+    The Hamiltonian is given by:
+    H = - sum_i sigma_z^i sigma_z^{i+1} - omega * sum_i sigma_x^i - g * sum_i sigma_z^i
+    where sigma_z^i and sigma_x^i are the Pauli z and x operators acting on the i-th particle, respectively, and we assume periodic boundary conditions, i.e., sigma_z^N = sigma_z^0.
     """
-
+    
     dims_local = [2] * N
-
-    sig_x = [
-        n_party_op_sparse(
-            dims_local,
-            i,
-            ops.sigma_x_sparse(),
-        )
-        for i in range(N)
-    ]
-
-    sig_z = [
-        n_party_op_sparse(
-            dims_local,
-            i,
-            ops.sigma_z_sparse(),
-        )
-        for i in range(N)
-    ]
+    sig_x = [n_party_op_sparse(dims_local, i, ops.sigma_x_sparse()) for i in range(N)]
+    sig_z = [n_party_op_sparse(dims_local, i, ops.sigma_z_sparse()) for i in range(N)]
 
     dim_global = 2 ** N
     H = sparse.csr_array((dim_global, dim_global), dtype=complex)
-
     for i in range(N):
-        H -= J * sig_z[i] @ sig_z[(i + 1) % N]
-        H -= B * sig_x[i]
+        H -= omega * sig_x[i]
         H -= g * sig_z[i]
-
+        H -= sig_z[i] @ sig_z[(i + 1) % N] # periodic boundary conditions
     return H
 
 
-def E_tilted_TFIM_exact_ED(N, J, B, g):
+###################### Solution sheet 10 ######################
+
+
+def build_H_EIT(params):
     """
-    Compute the tilted TFIM ground-state energy by exact sdiagonalization.
+    Builds the Hamiltonian matrix for the atom-laser interaction in the EIT configuration for a three-level atom with parameters `params.
+    The Hamiltonian is given by:
+    H = [[0, 0, -omegaP/2],
+         [0, DeltaP - DeltaC, -omegaC/2],
+         [-omegaP/2, -omegaC/2, DeltaP]]
+    where omegaP and omegaC are the Rabi frequencies of the probe and control lasers, respectively, and DeltaP and DeltaC are the detunings of the probe and control lasers, respectively.
     """
-
-    H = build_H_tilted_TFIM_ED(N, J, B, g)
-
-    E0 = sLA.eigsh(
-        H,
-        k=1,
-        which="SA",
-        return_eigenvectors=False,
-    )[0]
-
-    return np.real(E0)
-    
-###################### Solution sheet 11 ######################
-
+    H = np.array(
+        [
+            [0, 0, -params["omegaP"] / 2],
+            [0, params["DeltaP"] - params["DeltaC"], -params["omegaC"] / 2],
+            [-params["omegaP"] / 2, -params["omegaC"] / 2, params["DeltaP"]]
+        ],
+        dtype='complex'
+    )
+    return H
