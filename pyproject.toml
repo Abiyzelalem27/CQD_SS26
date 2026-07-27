@@ -19,7 +19,9 @@ dependencies = [
     "ipywidgets",
     "notebook<7",
     "qutip",
-    "jax", 
+    "jax",
+    "flax",
+    "optax",
 ]
 
 [project.optional-dependencies]
